@@ -22,25 +22,19 @@ This module is registered as a Pi package. When loaded by a Pi Agent, it automat
 
 ### Registered Tools
 
-#### **`standard_parse_pdf`** (Recommended)
+#### **`standard_parse_pdf`**
 - **Description**: Parses any standards PDF document to extract layout blocks, mines rules/requirements, automatically detects the standard type, and constructs a semantic Knowledge Graph.
 - **Parameters**:
   - `pdf_path` (string, required): Relative or absolute path to the PDF standard file.
-  - `output_dir` (string, optional): Folder path to save parsed outputs (default: `./output_ieee_parser`).
+  - `output_dir` (string, optional): Folder path to save parsed outputs (default: `./output_standard_parser`).
   - `domain` (string, optional): Domain preset (`'auto'`, `'generic'`, `'smartGrid'`, `'security'`). Default is `'auto'`.
   - `additional_domain_info` (string, optional): Optional additional context about the standard or system architecture to include in the audit prompt.
 
-#### **`standard_audit_query`** (Recommended)
+#### **`standard_audit_query`**
 - **Description**: Queries the active Knowledge Graph using exact IDs or a flexible TF-IDF keyword search (general ideas), compiling an expert audit payload ready for LLM analysis.
 - **Parameters**:
   - `query` (string, required): Search query: requirement ID (e.g. `REQ-001`), section (e.g. `2.0`), term (e.g. `security`), or a general idea (e.g. `handling transmission latency`).
-  - `output_dir` (string, optional): Folder path to load the knowledge graph from if not in-memory (default: `./output_ieee_parser`).
-
-#### **`ieee_parse_pdf`** (Legacy backward-compatible alias)
-- **Description**: Parses an IEEE standard PDF under the legacy smartGrid preset.
-
-#### **`ieee_audit_query`** (Legacy backward-compatible alias)
-- **Description**: Queries the IEEE standards Knowledge Graph.
+  - `output_dir` (string, optional): Folder path to load the knowledge graph from if not in-memory (default: `./output_standard_parser`).
 
 ### Registered Slash Commands
 
@@ -48,8 +42,6 @@ This module is registered as a Pi package. When loaded by a Pi Agent, it automat
   - Triggers the PDF standards parser, rule mining, and auto-detect domain pipeline.
 - **`/standard-audit <query_or_idea> [output_dir]`**
   - Queries the knowledge graph using exact ID or TF-IDF matching and outputs an LLM critique markdown payload (e.g., `audit_payload_<query>.md`) to the output folder.
-- **`/ieee-parse <pdf_path> [output_dir]`** (Legacy alias)
-- **`/ieee-audit <query> [output_dir]`** (Legacy alias)
 
 ---
 
@@ -114,7 +106,7 @@ runPipeline().catch(console.error);
 
 ## 4. Output Pipeline Artifacts
 
-By default, all pipeline assets are written to `./output_generic_parser` or `./output_ieee_parser`:
+By default, all pipeline assets are written to `./output_standard_parser`:
 
 1. **`blocks.json`**: Flat list of extracted, cleaned text layout blocks (headings, paragraphs, lists, tables).
 2. **`tree.json`**: Nested structural outlines showing document section parent-child hierarchy.

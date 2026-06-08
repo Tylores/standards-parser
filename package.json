@@ -1,12 +1,12 @@
 {
-  "name": "ieee-parser",
+  "name": "standards-parser",
   "version": "1.0.0",
   "description": "General Technical Standards Parser, Rule Miner, Semantic Linker, and Agentic Auditor extension for Pi agent.",
   "main": "dist/index.js",
   "type": "module",
   "keywords": [
     "pi-package",
-    "ieee",
+    "standards",
     "parser",
     "compliance",
     "auditing"
@@ -30,6 +30,6 @@
   "pi": {
     "extensions": [
       "./dist/index.js"
-  ]
+    ]
   }
 }
