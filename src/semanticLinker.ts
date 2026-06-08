@@ -75,9 +75,13 @@ export interface KnowledgeGraph {
 
 export class SemanticLinker {
   private topNTerms: number;
+  private curatedTerms: Record<string, RegExp>;
+  private stopwords: Set<string>;
 
-  constructor(topNTerms = 20) {
+  constructor(topNTerms = 20, config?: { curatedTerms?: Record<string, RegExp>; stopwords?: string[] }) {
     this.topNTerms = topNTerms;
+    this.curatedTerms = config?.curatedTerms || CURATED_TERMS;
+    this.stopwords = config?.stopwords ? new Set(config.stopwords) : STOPWORDS;
   }
 
   buildKnowledgeGraph(ruleLedger: Rule[], blocks: Block[]): KnowledgeGraph {
@@ -111,8 +115,8 @@ export class SemanticLinker {
       insertedNodeIds.add(nodeId);
 
       // Map term string to compile patterns for matching
-      if (term in CURATED_TERMS) {
-        termPatterns[term] = CURATED_TERMS[term];
+      if (term in this.curatedTerms) {
+        termPatterns[term] = this.curatedTerms[term];
       } else {
         termPatterns[term] = new RegExp(`\\b${this.escapeRegExp(term)}s?\\b`, 'i');
       }
@@ -318,7 +322,7 @@ export class SemanticLinker {
       const text = rule.text.toLowerCase();
       const words = text.match(/\b[a-zA-Z]{3,}\b/g) || [];
       for (const w of words) {
-        if (!STOPWORDS.has(w)) {
+        if (!this.stopwords.has(w)) {
           counter[w] = (counter[w] || 0) + 1;
         }
       }
@@ -332,8 +336,8 @@ export class SemanticLinker {
 
     // Merge curated list and dynamic list
     const finalTerms: Record<string, number> = {};
-    for (const word of Object.keys(CURATED_TERMS)) {
-      const pattern = CURATED_TERMS[word];
+    for (const word of Object.keys(this.curatedTerms)) {
+      const pattern = this.curatedTerms[word];
       let totalMatches = 0;
       for (const rule of ruleLedger) {
         pattern.lastIndex = 0;

@@ -65,9 +65,11 @@ export class RequirementAuditor {
   private nodes: Record<string, KGNode>;
   private outEdges: Record<string, KGEdge[]>;
   private inEdges: Record<string, KGEdge[]>;
+  private domainConfig?: any;
 
-  constructor(knowledgeGraph: KnowledgeGraph) {
+  constructor(knowledgeGraph: KnowledgeGraph, domainConfig?: any) {
     this.kg = knowledgeGraph;
+    this.domainConfig = domainConfig;
     this.nodes = {};
     for (const node of knowledgeGraph.nodes) {
       this.nodes[node.id] = node;
@@ -90,9 +92,9 @@ export class RequirementAuditor {
 
   queryContext(query: string): AuditContext | null {
     const queryStrip = query.trim();
-    const targetNodes: KGNode[] = [];
+    let targetNodes: KGNode[] = [];
 
-    // 1. Resolve query to nodes
+    // 1. Resolve query to exact node match if possible
     if (queryStrip in this.nodes) {
       targetNodes.push(this.nodes[queryStrip]);
     } else {
@@ -104,7 +106,7 @@ export class RequirementAuditor {
       } else if (secId in this.nodes) {
         targetNodes.push(this.nodes[secId]);
       } else {
-        // Try partial match on term names or sections
+        // Try exact match on term names or sections
         for (const node of Object.values(this.nodes)) {
           const label = node.label;
           const props = node.properties || {};
@@ -113,6 +115,62 @@ export class RequirementAuditor {
           } else if (label === "Section" && props.section_number === queryStrip) {
             targetNodes.push(node);
           }
+        }
+      }
+    }
+
+    // 2. Flexible Audit Search (Token Overlap / TF-IDF Ranking)
+    if (targetNodes.length === 0) {
+      const stopwords = this.domainConfig?.stopwords || [];
+      const queryTokens = queryStrip
+        .toLowerCase()
+        .split(/[^a-zA-Z0-9_\-\.]+/)
+        .filter(t => t.length > 1 && !stopwords.includes(t));
+
+      if (queryTokens.length > 0) {
+        const scoredNodes = Object.values(this.nodes).map(node => {
+          let score = 0;
+          const props = node.properties || {};
+
+          if (node.label === "Requirement") {
+            const text = (props.text || "").toLowerCase();
+            for (const token of queryTokens) {
+              if (text.includes(token)) {
+                score += 2.0; // High weight for requirement text matches
+              }
+            }
+          } else if (node.label === "Section") {
+            const title = (props.title || "").toLowerCase();
+            const secNum = (props.section_number || "").toLowerCase();
+            for (const token of queryTokens) {
+              if (secNum === token) {
+                score += 4.0; // Extremely high weight for exact section number match
+              } else if (title.includes(token)) {
+                score += 1.5; // Medium weight for section title match
+              }
+            }
+          } else if (node.label === "Term") {
+            const name = (props.name || "").toLowerCase();
+            for (const token of queryTokens) {
+              if (name === token) {
+                score += 3.0; // High weight for term match
+              } else if (name.includes(token)) {
+                score += 1.0;
+              }
+            }
+          }
+
+          return { node, score };
+        });
+
+        // Filter out zero-score items and sort by score descending
+        const matches = scoredNodes
+          .filter(item => item.score > 0)
+          .sort((a, b) => b.score - a.score);
+
+        if (matches.length > 0) {
+          // Take up to 3 top-scoring nodes to provide rich, blended target context
+          targetNodes = matches.slice(0, 3).map(m => m.node);
         }
       }
     }
@@ -316,7 +374,15 @@ export class RequirementAuditor {
     const potentialConflictsStr = conflictsMd.length > 0 ? conflictsMd.join('\n') : "No explicit conflicts detected in this context segment.";
 
     // Fill template
-    let payload = AUDIT_PROMPT_TEMPLATE;
+    let payload = this.domainConfig?.auditTemplate || AUDIT_PROMPT_TEMPLATE;
+    payload = payload.replace('{role_description}', this.domainConfig?.roleDescription || "Focus on overall clarity, deterministic behavior, testability, and structural completeness of the engineering requirements.");
+    
+    const addDomainInfo = this.domainConfig?.additionalDomainInfo;
+    const addDomainInfoSec = addDomainInfo 
+      ? `================================================================================\n6. ADDITIONAL DOMAIN & TARGET ENVIRONMENT INFO\n================================================================================\n${addDomainInfo}\n`
+      : "";
+    payload = payload.replace('{additional_domain_info_section}', addDomainInfoSec);
+
     payload = payload.replace('{target_requirements}', targetRequirementsStr);
     payload = payload.replace('{structural_context}', structuralContextStr);
     payload = payload.replace('{linked_rules}', linkedRulesStr);

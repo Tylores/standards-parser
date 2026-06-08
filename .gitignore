@@ -1,5 +1,5 @@
 node_modules/
-dist/
 output_ieee_parser/
+output_generic_parser/
 .DS_Store
 *.log

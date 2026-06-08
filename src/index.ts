@@ -6,6 +6,7 @@ import { PDFParser, buildHierarchyTree, treeToMarkdown, Block } from "./parser.j
 import { RuleMiner, Rule } from "./ruleMiner.js";
 import { SemanticLinker, KnowledgeGraph } from "./semanticLinker.js";
 import { RequirementAuditor } from "./auditing.js";
+import { detectDomainPreset, getDomainConfig } from "./presets.js";
 
 export default function (pi: ExtensionAPI) {
   // Closure variable to keep the active Knowledge Graph in memory
@@ -14,10 +15,10 @@ export default function (pi: ExtensionAPI) {
 
   // Reconstruct active graph from previous session entries if present
   pi.on("session_start", async (_event, ctx) => {
-    ctx.ui.notify("IEEE PDF Parser extension loaded!", "info");
+    ctx.ui.notify("Standards PDF Parser & Auditor extension loaded!", "info");
 
     for (const entry of ctx.sessionManager.getEntries()) {
-      if (entry.type === "custom" && entry.customType === "ieee-parser-state") {
+      if (entry.type === "custom" && (entry.customType === "standard-parser-state" || entry.customType === "ieee-parser-state")) {
         const data = entry.data as any;
         if (data && typeof data.lastOutputDir === "string") {
           lastOutputDir = data.lastOutputDir;
@@ -35,8 +36,19 @@ export default function (pi: ExtensionAPI) {
     }
   });
 
-  // Helper function to run the full pipeline
-  async function runPipeline(pdfPath: string, outputDir: string, ctx: any) {
+  // Helper function to run the full generic pipeline
+  async function runGenericPipeline(
+    pdfPath: string,
+    outputDir: string,
+    ctx: any,
+    options?: {
+      domain?: "auto" | "generic" | "smartGrid" | "security";
+      additionalTerms?: Record<string, string>;
+      additionalStopwords?: string[];
+      additionalCleanHeaders?: string[];
+      additionalDomainInfo?: string;
+    }
+  ) {
     const absPdfPath = resolve(ctx.cwd, pdfPath);
     if (!existsSync(absPdfPath)) {
       throw new Error(`Target PDF file not found at: ${pdfPath}`);
@@ -45,8 +57,24 @@ export default function (pi: ExtensionAPI) {
     const absOutputDir = resolve(ctx.cwd, outputDir);
     mkdirSync(absOutputDir, { recursive: true });
 
-    // Step 1: Parse PDF
-    const parser = new PDFParser(absPdfPath);
+    // Step 1: Detect standard domain preset if set to "auto"
+    const initialParser = new PDFParser(absPdfPath);
+    let selectedDomain: string = options?.domain || "auto";
+
+    if (selectedDomain === "auto") {
+      const sampleText = await initialParser.getSampleText();
+      selectedDomain = detectDomainPreset(sampleText);
+    }
+
+    const domainConfig = getDomainConfig(selectedDomain, {
+      additionalTerms: options?.additionalTerms,
+      additionalStopwords: options?.additionalStopwords,
+      additionalCleanHeaders: options?.additionalCleanHeaders,
+      additionalDomainInfo: options?.additionalDomainInfo
+    });
+
+    // Step 2: Parse PDF with custom clean headers
+    const parser = new PDFParser(absPdfPath, domainConfig.cleanHeaders);
     const blocks = await parser.parse();
 
     const blocksPath = join(absOutputDir, "blocks.json");
@@ -60,15 +88,31 @@ export default function (pi: ExtensionAPI) {
     const markdownPath = join(absOutputDir, "document_cleaned.md");
     writeFileSync(markdownPath, mdContent, "utf8");
 
-    // Step 2: Mine Rules
+    // Step 3: Mine Rules
     const miner = new RuleMiner();
     const ruleLedger = miner.mineRules(blocks);
     const ledgerPath = join(absOutputDir, "ledger.json");
     writeFileSync(ledgerPath, JSON.stringify(ruleLedger, null, 2), "utf8");
 
-    // Step 3: Semantic Linker & Knowledge Graph
-    const linker = new SemanticLinker();
+    // Step 4: Semantic Linker & Knowledge Graph
+    const linker = new SemanticLinker(20, {
+      curatedTerms: domainConfig.curatedTerms,
+      stopwords: domainConfig.stopwords
+    });
     const kg = linker.buildKnowledgeGraph(ruleLedger, blocks);
+
+    // Save metadata inside knowledge graph JSON
+    (kg as any).metadata = {
+      detected_domain: selectedDomain,
+      config: {
+        name: domainConfig.name,
+        roleDescription: domainConfig.roleDescription,
+        stopwords: domainConfig.stopwords,
+        additionalDomainInfo: domainConfig.additionalDomainInfo,
+        auditTemplate: domainConfig.auditTemplate
+      }
+    };
+
     const graphPath = join(absOutputDir, "knowledge_graph.json");
     writeFileSync(graphPath, JSON.stringify(kg, null, 2), "utf8");
 
@@ -77,7 +121,7 @@ export default function (pi: ExtensionAPI) {
     lastOutputDir = outputDir;
 
     // Persist path in session
-    pi.appendEntry("ieee-parser-state", { lastOutputDir });
+    pi.appendEntry("standard-parser-state", { lastOutputDir, domain: selectedDomain });
 
     // Node & Edge Counts
     const nodeCounts: Record<string, number> = {};
@@ -94,14 +138,101 @@ export default function (pi: ExtensionAPI) {
       rulesCount: ruleLedger.length,
       nodes: nodeCounts,
       edges: edgeCounts,
-      absOutputDir
+      absOutputDir,
+      detectedDomain: selectedDomain,
+      domainConfig
     };
   }
 
   // Register Custom Tools
   pi.registerTool({
+    name: "standard_parse_pdf",
+    label: "Standard Parse PDF",
+    description: "Parses any standards PDF document to extract layout blocks, mines rules/requirements, automatically detects the standard type, and constructs a semantic Knowledge Graph.",
+    parameters: Type.Object({
+      pdf_path: Type.String({ description: "Relative or absolute path to the PDF standard file" }),
+      output_dir: Type.Optional(Type.String({ description: "Relative path to save parsed outputs (default: './output_ieee_parser')" })),
+      domain: Type.Optional(Type.String({ description: "Domain preset ('auto', 'generic', 'smartGrid', 'security'). Default is 'auto'." })),
+      additional_domain_info: Type.Optional(Type.String({ description: "Optional additional context about the standard or system architecture to include in the audit prompt." }))
+    }),
+    async execute(toolCallId, params, signal, onUpdate, ctx) {
+      const outDir = params.output_dir || "./output_ieee_parser";
+      onUpdate?.({ content: [{ type: "text", text: "Starting standards parsing pipeline..." }], details: {} });
+
+      try {
+        const results = await runGenericPipeline(params.pdf_path, outDir, ctx, {
+          domain: params.domain as any,
+          additionalDomainInfo: params.additional_domain_info
+        });
+        const nodeSummary = Object.entries(results.nodes).map(([k, v]) => `  - ${k}: ${v}`).join('\n');
+        const edgeSummary = Object.entries(results.edges).map(([k, v]) => `  - ${k}: ${v}`).join('\n');
+
+        const summaryText = `Standards parsing completed successfully!
+Detected Domain: ${results.detectedDomain.toUpperCase()}
+Outputs saved to: ${results.absOutputDir}
+Parsed ${results.blocksCount} layout blocks and mined ${results.rulesCount} compliance requirements.
+
+Knowledge Graph Constructed:
+Nodes:
+${nodeSummary}
+Edges:
+${edgeSummary}`;
+
+        return {
+          content: [{ type: "text", text: summaryText }],
+          details: { ...results }
+        };
+      } catch (err: any) {
+        throw new Error(`Standard Parser Pipeline failed: ${err.message}`);
+      }
+    }
+  });
+
+  pi.registerTool({
+    name: "standard_audit_query",
+    label: "Standard Audit Query",
+    description: "Queries the active Knowledge Graph using exact IDs or a flexible TF-IDF keyword search (general ideas), compiling an expert audit payload ready for LLM analysis.",
+    parameters: Type.Object({
+      query: Type.String({ description: "Search query: requirement ID (e.g. 'REQ-001'), section (e.g. '2.0'), term (e.g. 'security'), or a general idea (e.g. 'transmission latency issues')" }),
+      output_dir: Type.Optional(Type.String({ description: "Directory to load the knowledge graph from if not in memory (default: './output_ieee_parser')" }))
+    }),
+    async execute(toolCallId, params, signal, onUpdate, ctx) {
+      let graph = activeGraph;
+      let activeConfig = (graph as any)?.metadata?.config;
+
+      if (!graph) {
+        const searchDir = params.output_dir || lastOutputDir;
+        const resolvedGraphPath = resolve(ctx.cwd, join(searchDir, "knowledge_graph.json"));
+        if (existsSync(resolvedGraphPath)) {
+          try {
+            graph = JSON.parse(readFileSync(resolvedGraphPath, "utf8"));
+            activeGraph = graph;
+            lastOutputDir = searchDir;
+            activeConfig = (graph as any)?.metadata?.config;
+          } catch {
+            throw new Error(`Failed to load knowledge graph from ${resolvedGraphPath}`);
+          }
+        }
+      }
+
+      if (!graph) {
+        throw new Error("No active Knowledge Graph found. Please run 'standard_parse_pdf' first.");
+      }
+
+      const auditor = new RequirementAuditor(graph, activeConfig);
+      const payload = auditor.generateAuditPayload(params.query);
+
+      return {
+        content: [{ type: "text", text: payload }],
+        details: { query: params.query, detectedDomain: (graph as any)?.metadata?.detected_domain }
+      };
+    }
+  });
+
+  // Backward Compatible Legacy Tools
+  pi.registerTool({
     name: "ieee_parse_pdf",
-    label: "IEEE Parse PDF",
+    label: "IEEE Parse PDF (Legacy)",
     description: "Parses an IEEE standard PDF to extract structured headings, paragraphs, lists, and tables, mines compliance rules, and constructs a semantic relation Knowledge Graph.",
     parameters: Type.Object({
       pdf_path: Type.String({ description: "Relative or absolute path to the IEEE PDF standard file" }),
@@ -109,14 +240,14 @@ export default function (pi: ExtensionAPI) {
     }),
     async execute(toolCallId, params, signal, onUpdate, ctx) {
       const outDir = params.output_dir || "./output_ieee_parser";
-      onUpdate?.({ content: [{ type: "text", text: "Starting IEEE standards parsing pipeline..." }], details: {} });
+      onUpdate?.({ content: [{ type: "text", text: "Starting IEEE standards parsing pipeline (Legacy mode)..." }], details: {} });
 
       try {
-        const results = await runPipeline(params.pdf_path, outDir, ctx);
+        const results = await runGenericPipeline(params.pdf_path, outDir, ctx, { domain: "smartGrid" });
         const nodeSummary = Object.entries(results.nodes).map(([k, v]) => `  - ${k}: ${v}`).join('\n');
         const edgeSummary = Object.entries(results.edges).map(([k, v]) => `  - ${k}: ${v}`).join('\n');
 
-        const summaryText = `IEEE standards parsing completed successfully!
+        const summaryText = `IEEE standards parsing completed successfully! (SmartGrid Preset)
 Outputs saved to: ${results.absOutputDir}
 Parsed ${results.blocksCount} layout blocks and mined ${results.rulesCount} compliance requirements.
 
@@ -138,82 +269,57 @@ ${edgeSummary}`;
 
   pi.registerTool({
     name: "ieee_audit_query",
-    label: "IEEE Audit Query",
+    label: "IEEE Audit Query (Legacy)",
     description: "Queries the active Knowledge Graph by section number, requirement ID, or technical term, and compiles an expert Systems Architect audit payload ready for analysis.",
     parameters: Type.Object({
       query: Type.String({ description: "Search query: requirement ID (e.g. 'REQ-001'), term (e.g. 'heartbeat'), or section (e.g. '2.0')" }),
       output_dir: Type.Optional(Type.String({ description: "Directory to load the knowledge graph from if not in memory (default: './output_ieee_parser')" }))
     }),
     async execute(toolCallId, params, signal, onUpdate, ctx) {
-      let graph = activeGraph;
-
-      if (!graph) {
-        const searchDir = params.output_dir || lastOutputDir;
-        const resolvedGraphPath = resolve(ctx.cwd, join(searchDir, "knowledge_graph.json"));
-        if (existsSync(resolvedGraphPath)) {
-          try {
-            graph = JSON.parse(readFileSync(resolvedGraphPath, "utf8"));
-            activeGraph = graph;
-            lastOutputDir = searchDir;
-          } catch {
-            throw new Error(`Failed to load knowledge graph from ${resolvedGraphPath}`);
-          }
-        }
-      }
-
-      if (!graph) {
-        throw new Error("No active Knowledge Graph found. Please run 'ieee_parse_pdf' first.");
-      }
-
-      const auditor = new RequirementAuditor(graph);
-      const payload = auditor.generateAuditPayload(params.query);
-
-      return {
-        content: [{ type: "text", text: payload }],
-        details: { query: params.query }
-      };
+      return (pi.getAllTools() as any).standard_audit_query.execute(toolCallId, params, signal, onUpdate, ctx);
     }
   });
 
-  // Register Slash Commands
-  pi.registerCommand("ieee-parse", {
-    description: "Run the IEEE standards parsing pipeline on a PDF file",
+  // Register Generic Slash Commands
+  pi.registerCommand("standard-parse", {
+    description: "Run the standards parsing pipeline on a PDF file",
     handler: async (args, ctx) => {
       const parts = args ? args.split(/\s+/) : [];
       if (parts.length === 0 || !parts[0]) {
-        ctx.ui.notify("Usage: /ieee-parse <pdf_path> [output_dir]", "warning");
+        ctx.ui.notify("Usage: /standard-parse <pdf_path> [output_dir] [domain]", "warning");
         return;
       }
 
       const pdfPath = parts[0];
       const outputDir = parts[1] || "./output_ieee_parser";
+      const domain = (parts[2] || "auto") as any;
 
-      ctx.ui.setStatus("ieee-parser", "Parsing PDF standards...");
+      ctx.ui.setStatus("standard-parser", "Parsing PDF standards...");
       ctx.ui.notify(`Starting PDF parse for: ${pdfPath}`, "info");
 
       try {
-        const results = await runPipeline(pdfPath, outputDir, ctx);
-        ctx.ui.setStatus("ieee-parser", undefined); // Clear status
-        ctx.ui.notify(`Parse successful! Saved outputs to ${outputDir}`, "info");
+        const results = await runGenericPipeline(pdfPath, outputDir, ctx, { domain });
+        ctx.ui.setStatus("standard-parser", undefined);
+        ctx.ui.notify(`Parse successful! Auto-detected domain: ${results.detectedDomain.toUpperCase()}`, "info");
 
-        const summary = `Parsed ${results.blocksCount} layout blocks, mined ${results.rulesCount} compliance rules, created ${Object.keys(results.nodes).length} node types.`;
+        const summary = `Parsed ${results.blocksCount} layout blocks, mined ${results.rulesCount} compliance rules. Saved outputs to ${outputDir}`;
         ctx.ui.notify(summary, "info");
       } catch (err: any) {
-        ctx.ui.setStatus("ieee-parser", undefined);
-        ctx.ui.notify(`IEEE Parser Error: ${err.message}`, "error");
+        ctx.ui.setStatus("standard-parser", undefined);
+        ctx.ui.notify(`Standard Parser Error: ${err.message}`, "error");
       }
     }
   });
 
-  pi.registerCommand("ieee-audit", {
-    description: "Generate an audit payload for a requirement ID, term, or section",
+  pi.registerCommand("standard-audit", {
+    description: "Generate an audit payload using flexible query searching",
     handler: async (args, ctx) => {
-      const parts = args ? args.split(/\s+/) : [];
-      if (parts.length === 0 || !parts[0]) {
-        ctx.ui.notify("Usage: /ieee-audit <query> [output_dir]", "warning");
+      if (!args) {
+        ctx.ui.notify("Usage: /standard-audit <query_or_idea> [output_dir]", "warning");
         return;
       }
 
+      const parts = args.split(/\s+/);
       const query = parts[0];
       const searchDir = parts[1] || lastOutputDir;
 
@@ -233,12 +339,13 @@ ${edgeSummary}`;
       }
 
       if (!graph) {
-        ctx.ui.notify("No active Knowledge Graph. Run '/ieee-parse <pdf_path>' first.", "warning");
+        ctx.ui.notify("No active Knowledge Graph. Run '/standard-parse <pdf_path>' first.", "warning");
         return;
       }
 
       try {
-        const auditor = new RequirementAuditor(graph);
+        const activeConfig = (graph as any)?.metadata?.config;
+        const auditor = new RequirementAuditor(graph, activeConfig);
         const payload = auditor.generateAuditPayload(query);
 
         const safeQueryName = query.replace(/[^a-zA-Z0-9_\-]/g, "_");
@@ -249,7 +356,86 @@ ${edgeSummary}`;
         writeFileSync(absDestPath, payload, "utf8");
         ctx.ui.notify(`Saved audit payload to: ${destPath}`, "info");
       } catch (err: any) {
-        ctx.ui.notify(`IEEE Audit Error: ${err.message}`, "error");
+        ctx.ui.notify(`Standard Audit Error: ${err.message}`, "error");
+      }
+    }
+  });
+
+  // Legacy Slash Commands (Forward to Generic implementations)
+  pi.registerCommand("ieee-parse", {
+    description: "Run the IEEE standards parsing pipeline on a PDF file (Legacy)",
+    handler: async (args, ctx) => {
+      const parts = args ? args.split(/\s+/) : [];
+      if (parts.length === 0 || !parts[0]) {
+        ctx.ui.notify("Usage: /ieee-parse <pdf_path> [output_dir]", "warning");
+        return;
+      }
+      const pdfPath = parts[0];
+      const outputDir = parts[1] || "./output_ieee_parser";
+
+      ctx.ui.setStatus("standard-parser", "Parsing PDF standards (Legacy)...");
+      ctx.ui.notify(`Starting PDF parse for: ${pdfPath}`, "info");
+
+      try {
+        const results = await runGenericPipeline(pdfPath, outputDir, ctx, { domain: "smartGrid" });
+        ctx.ui.setStatus("standard-parser", undefined);
+        ctx.ui.notify(`Parse successful! Preset: SMARTGRID`, "info");
+
+        const summary = `Parsed ${results.blocksCount} layout blocks, mined ${results.rulesCount} compliance rules. Saved outputs to ${outputDir}`;
+        ctx.ui.notify(summary, "info");
+      } catch (err: any) {
+        ctx.ui.setStatus("standard-parser", undefined);
+        ctx.ui.notify(`Standard Parser Error: ${err.message}`, "error");
+      }
+    }
+  });
+
+  pi.registerCommand("ieee-audit", {
+    description: "Generate an audit payload for a requirement ID, term, or section (Legacy)",
+    handler: async (args, ctx) => {
+      if (!args) {
+        ctx.ui.notify("Usage: /ieee-audit <query> [output_dir]", "warning");
+        return;
+      }
+
+      const parts = args.split(/\s+/);
+      const query = parts[0];
+      const searchDir = parts[1] || lastOutputDir;
+
+      let graph = activeGraph;
+      if (!graph) {
+        const resolvedGraphPath = resolve(ctx.cwd, join(searchDir, "knowledge_graph.json"));
+        if (existsSync(resolvedGraphPath)) {
+          try {
+            graph = JSON.parse(readFileSync(resolvedGraphPath, "utf8"));
+            activeGraph = graph;
+            lastOutputDir = searchDir;
+          } catch {
+            ctx.ui.notify(`Failed to load knowledge graph from: ${resolvedGraphPath}`, "error");
+            return;
+          }
+        }
+      }
+
+      if (!graph) {
+        ctx.ui.notify("No active Knowledge Graph. Run '/standard-parse <pdf_path>' first.", "warning");
+        return;
+      }
+
+      try {
+        const activeConfig = (graph as any)?.metadata?.config;
+        const auditor = new RequirementAuditor(graph, activeConfig);
+        const payload = auditor.generateAuditPayload(query);
+
+        const safeQueryName = query.replace(/[^a-zA-Z0-9_\-]/g, "_");
+        const auditFileName = `audit_payload_${safeQueryName}.md`;
+        const destPath = join(searchDir, auditFileName);
+        const absDestPath = resolve(ctx.cwd, destPath);
+
+        writeFileSync(absDestPath, payload, "utf8");
+        ctx.ui.notify(`Saved audit payload to: ${destPath}`, "info");
+      } catch (err: any) {
+        ctx.ui.notify(`Standard Audit Error: ${err.message}`, "error");
       }
     }
   });

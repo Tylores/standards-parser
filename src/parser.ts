@@ -28,7 +28,7 @@ export function isTableRow(line: string): boolean {
   return parts.length >= 2 && parts.every(p => p.length > 0);
 }
 
-export function cleanPageLines(lines: string[]): string[] {
+export function cleanPageLines(lines: string[], cleanHeaders?: string[]): string[] {
   const cleaned: string[] = [];
   for (let idx = 0; idx < lines.length; idx++) {
     const line = lines[idx];
@@ -47,11 +47,26 @@ export function cleanPageLines(lines: string[]): string[] {
 
     // Check for common running headers/footers
     const lowerLine = lineStr.toLowerCase();
-    if (
-      lowerLine.includes("energy services interface") ||
-      lowerLine.includes("ieee std") ||
-      lowerLine.includes("prepared by")
-    ) {
+    let isHeader = false;
+
+    if (cleanHeaders && cleanHeaders.length > 0) {
+      for (const h of cleanHeaders) {
+        if (lowerLine.includes(h.toLowerCase())) {
+          isHeader = true;
+          break;
+        }
+      }
+    } else {
+      if (
+        lowerLine.includes("energy services interface") ||
+        lowerLine.includes("ieee std") ||
+        lowerLine.includes("prepared by")
+      ) {
+        isHeader = true;
+      }
+    }
+
+    if (isHeader) {
       if (idx <= 2 || idx >= lines.length - 3) {
         continue;
       }
@@ -84,9 +99,23 @@ export interface TreeNode {
 
 export class PDFParser {
   private pdfPath: string;
+  private cleanHeaders?: string[];
 
-  constructor(pdfPath: string) {
+  constructor(pdfPath: string, cleanHeaders?: string[]) {
     this.pdfPath = pdfPath;
+    this.cleanHeaders = cleanHeaders;
+  }
+
+  async getSampleText(): Promise<string> {
+    try {
+      const data = readFileSync(this.pdfPath);
+      const pdfParser = new PDFParse({ data });
+      const textResult = await pdfParser.getText();
+      // Concatenate the first few pages to detect standard type
+      return (textResult.pages || []).slice(0, 3).map((p: any) => p.text || "").join("\n");
+    } catch {
+      return "";
+    }
   }
 
   async parse(): Promise<Block[]> {
@@ -103,7 +132,7 @@ export class PDFParser {
         if (!text) continue;
 
         const rawLines = text.split('\n');
-        const cleanedLines = cleanPageLines(rawLines);
+        const cleanedLines = cleanPageLines(rawLines, this.cleanHeaders);
 
         for (const line of cleanedLines) {
           const lineStr = line.trim();

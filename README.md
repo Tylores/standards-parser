@@ -1,8 +1,8 @@
-# IEEE Standards Parsing & Compliance Linker Pipeline (Pi Agent Extension)
+# Generic Standards Parsing & Compliance Linker Pipeline (Pi Agent Extension)
 
-A production-ready, modular TypeScript tool and Pi Agent extension for parsing dense IEEE technical standard PDFs, mining compliance requirements, extracting terminology concepts, compiling Knowledge Graph representations, and generating context-rich prompt payloads for LLM-driven compliance audits.
+A production-ready, modular TypeScript tool and Pi Agent extension for parsing dense technical standard PDFs, mining compliance requirements, extracting terminology concepts, compiling Knowledge Graph representations, and generating context-rich prompt payloads for LLM-driven compliance audits.
 
-This package is designed to be loaded directly by Pi agents as an extension, providing them with semantic search, standard parsing, and structured engineering critique capabilities.
+This package is designed to be loaded directly by Pi agents as an extension, providing them with semantic search, standard parsing, and structured engineering critique capabilities across **any type of standards document** (IEEE, ISO, RFC, etc.) with automatic standard detection.
 
 ---
 
@@ -22,66 +22,89 @@ This module is registered as a Pi package. When loaded by a Pi Agent, it automat
 
 ### Registered Tools
 
-- **`ieee_parse_pdf`**
-  - **Description**: Parses an IEEE standard PDF to extract structured headings, paragraphs, lists, and tables, mines compliance rules, and constructs a semantic relation Knowledge Graph.
-  - **Parameters**:
-    - `pdf_path` (string, required): Relative or absolute path to the IEEE PDF standard file.
-    - `output_dir` (string, optional): Folder path to save parsed outputs (default: `./output_ieee_parser`).
+#### **`standard_parse_pdf`** (Recommended)
+- **Description**: Parses any standards PDF document to extract layout blocks, mines rules/requirements, automatically detects the standard type, and constructs a semantic Knowledge Graph.
+- **Parameters**:
+  - `pdf_path` (string, required): Relative or absolute path to the PDF standard file.
+  - `output_dir` (string, optional): Folder path to save parsed outputs (default: `./output_ieee_parser`).
+  - `domain` (string, optional): Domain preset (`'auto'`, `'generic'`, `'smartGrid'`, `'security'`). Default is `'auto'`.
+  - `additional_domain_info` (string, optional): Optional additional context about the standard or system architecture to include in the audit prompt.
 
-- **`ieee_audit_query`**
-  - **Description**: Queries the active Knowledge Graph by section number, requirement ID, or technical term, and compiles an expert Systems Architect audit payload ready for analysis.
-  - **Parameters**:
-    - `query` (string, required): Search query: requirement ID (e.g. `REQ-001`), term (e.g. `heartbeat`), or section (e.g. `2.0`).
-    - `output_dir` (string, optional): Folder path to load the knowledge graph from if not in-memory (default: `./output_ieee_parser`).
+#### **`standard_audit_query`** (Recommended)
+- **Description**: Queries the active Knowledge Graph using exact IDs or a flexible TF-IDF keyword search (general ideas), compiling an expert audit payload ready for LLM analysis.
+- **Parameters**:
+  - `query` (string, required): Search query: requirement ID (e.g. `REQ-001`), section (e.g. `2.0`), term (e.g. `security`), or a general idea (e.g. `handling transmission latency`).
+  - `output_dir` (string, optional): Folder path to load the knowledge graph from if not in-memory (default: `./output_ieee_parser`).
+
+#### **`ieee_parse_pdf`** (Legacy backward-compatible alias)
+- **Description**: Parses an IEEE standard PDF under the legacy smartGrid preset.
+
+#### **`ieee_audit_query`** (Legacy backward-compatible alias)
+- **Description**: Queries the IEEE standards Knowledge Graph.
 
 ### Registered Slash Commands
 
-- **`/ieee-parse <pdf_path> [output_dir]`**
-  - Triggers the PDF parser, rule mining, and knowledge graph construction pipeline.
-- **`/ieee-audit <query> [output_dir]`**
-  - Queries the knowledge graph and outputs an LLM critique markdown payload (e.g., `audit_payload_<query>.md`) to the output folder.
+- **`/standard-parse <pdf_path> [output_dir] [domain]`**
+  - Triggers the PDF standards parser, rule mining, and auto-detect domain pipeline.
+- **`/standard-audit <query_or_idea> [output_dir]`**
+  - Queries the knowledge graph using exact ID or TF-IDF matching and outputs an LLM critique markdown payload (e.g., `audit_payload_<query>.md`) to the output folder.
+- **`/ieee-parse <pdf_path> [output_dir]`** (Legacy alias)
+- **`/ieee-audit <query> [output_dir]`** (Legacy alias)
 
 ---
 
 ## 3. Programmatic Usage (TypeScript / JavaScript)
 
-You can also import and compose the pipeline components programmatically in your own TypeScript or Node.js scripts:
+You can import and compose the pipeline components programmatically in your own TypeScript or Node.js scripts:
 
 ```typescript
-import { PDFParser, buildHierarchyTree, treeToMarkdown } from './src/parser.js';
-import { RuleMiner } from './src/ruleMiner.js';
-import { SemanticLinker } from './src/semanticLinker.js';
-import { RequirementAuditor } from './src/auditing.js';
+import { PDFParser, buildHierarchyTree, treeToMarkdown } from './dist/parser.js';
+import { RuleMiner } from './dist/ruleMiner.js';
+import { SemanticLinker } from './dist/semanticLinker.js';
+import { RequirementAuditor } from './dist/auditing.js';
+import { detectDomainPreset, getDomainConfig } from './dist/presets.js';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 async function runPipeline() {
   const pdfPath = 'path/to/standard.pdf';
-  const outputDir = './output_ieee_parser';
+  const outputDir = './output_generic_parser';
 
-  // 1. Parse PDF to flat layout blocks
-  const parser = new PDFParser(pdfPath);
+  // 1. Detect standard domain preset
+  const initialParser = new PDFParser(pdfPath);
+  const sampleText = await initialParser.getSampleText();
+  const detectedPreset = detectDomainPreset(sampleText); // 'generic' | 'smartGrid' | 'security'
+
+  const domainConfig = getDomainConfig(detectedPreset, {
+    additionalDomainInfo: "Target system: custom secure distributed architecture."
+  });
+
+  // 2. Parse PDF to flat layout blocks
+  const parser = new PDFParser(pdfPath, domainConfig.cleanHeaders);
   const blocks = await parser.parse();
 
-  // 2. Reconstruct section tree hierarchy
+  // 3. Reconstruct section tree hierarchy
   const tree = buildHierarchyTree(blocks);
 
-  // 3. Mine deterministic compliance rules
+  // 4. Mine deterministic compliance rules
   const miner = new RuleMiner();
   const ledger = miner.mineRules(blocks);
 
-  // 4. Construct Semantic Knowledge Graph
-  const linker = new SemanticLinker();
+  // 5. Construct Semantic Knowledge Graph with dynamic preset
+  const linker = new SemanticLinker(20, {
+    curatedTerms: domainConfig.curatedTerms,
+    stopwords: domainConfig.stopwords
+  });
   const kg = linker.buildKnowledgeGraph(ledger, blocks);
 
-  // 5. Generate LLM Audit prompt payload
-  const auditor = new RequirementAuditor(kg);
-  const payload = auditor.generateAuditPayload('REQ-001');
+  // 6. Generate LLM Audit prompt payload using flexible search query
+  const auditor = new RequirementAuditor(kg, domainConfig);
+  const payload = auditor.generateAuditPayload('handling transport security');
 
   // Save artifacts
   mkdirSync(outputDir, { recursive: true });
   writeFileSync(join(outputDir, 'knowledge_graph.json'), JSON.stringify(kg, null, 2));
-  writeFileSync(join(outputDir, 'audit_payload_REQ-001.md'), payload);
+  writeFileSync(join(outputDir, 'audit_payload_general_query.md'), payload);
 }
 
 runPipeline().catch(console.error);
@@ -91,14 +114,14 @@ runPipeline().catch(console.error);
 
 ## 4. Output Pipeline Artifacts
 
-By default, all pipeline assets are written to `./output_ieee_parser`:
+By default, all pipeline assets are written to `./output_generic_parser` or `./output_ieee_parser`:
 
 1. **`blocks.json`**: Flat list of extracted, cleaned text layout blocks (headings, paragraphs, lists, tables).
 2. **`tree.json`**: Nested structural outlines showing document section parent-child hierarchy.
 3. **`document_cleaned.md`**: Fully cleaned and reconstructed document text in Markdown.
 4. **`ledger.json`**: Compliance requirements ledger containing IDs, constraint classifications, and hierarchies.
-5. **`knowledge_graph.json`**: Standardized JSON containing graph nodes (`Requirement`, `Section`, `Term`) and edges (`CONTAINS`, `REFERENCES`, `CONFLICTS_WITH`).
-6. **`audit_payload_<query>.md`**: Formatted prompt containing the queried target along with its direct structural parents, semantically linked rules, referenced terms, flagged contradictions, and system critique instructions.
+5. **`knowledge_graph.json`**: Standardized JSON containing graph nodes (`Requirement`, `Section`, `Term`), edges (`CONTAINS`, `REFERENCES`, `CONFLICTS_WITH`), and metadata details about the active domain preset.
+6. **`audit_payload_<query>.md`**: Formatted prompt containing the queried target along with its direct structural parents, semantically linked rules, referenced terms, flagged contradictions, custom domain details, and system critique instructions.
 
 ---
 
@@ -108,19 +131,20 @@ If you are an AI developer or agent extending or working with this codebase, ple
 
 ### File and Class Maps
 - **Extension Registry**: [src/index.ts](./src/index.ts) is the main entry point that registers the Pi tools and slash commands.
-- **Parser Logic**: Adjust headers/footers cleaning patterns or block merging rules in [src/parser.ts](./src/parser.ts). Key exports: [PDFParser](./src/parser.ts#L85), [buildHierarchyTree](./src/parser.ts#L14), and [treeToMarkdown](./src/parser.ts).
-- **Rule Extraction Patterns**: Modifying rule keywords (e.g., standard RFC conformance terms) or classification is done in [src/ruleMiner.ts](./src/ruleMiner.ts). Key exports: [RuleMiner](./src/ruleMiner.ts#L87) and [Rule](./src/ruleMiner.ts#L75).
-- **Concept & Stopwords Definitions**: Smart grid terms and dynamic terminology configuration are managed in [src/semanticLinker.ts](./src/semanticLinker.ts). Key exports: [SemanticLinker](./src/semanticLinker.ts#L76) and [KnowledgeGraph](./src/semanticLinker.ts#L71).
-- **System Prompt Templates**: The LLM audit critique prompt structure and evaluation instructions are defined in [src/auditing.ts](./src/auditing.ts). Key exports: [RequirementAuditor](./src/auditing.ts#L63).
+- **Domain Presets & Auto-detection**: [src/presets.ts](./src/presets.ts) defines generic, smartGrid, and security vocabularies and prompts.
+- **Parser Logic**: Adjust headers/footers cleaning patterns or block merging rules in [src/parser.ts](./src/parser.ts).
+- **Rule Extraction Patterns**: Modifying rule keywords or classification is done in [src/ruleMiner.ts](./src/ruleMiner.ts).
+- **Concept & Stopwords Definitions**: Curated terms and dynamic terminology configuration are managed in [src/semanticLinker.ts](./src/semanticLinker.ts).
+- **System Prompt Templates & Search Ranking**: The LLM audit critique prompt structure and flexible TF-IDF query search are defined in [src/auditing.ts](./src/auditing.ts).
 
 ### Development and Compilation
 To compile the TypeScript source files, run:
 ```bash
-npm run build # if configured, or run npx tsc
+npx -p typescript tsc
 ```
 This will generate JavaScript files with declarations in the `./dist` folder as configured in [tsconfig.json](./tsconfig.json).
 
-To run a pipeline test:
+To run the pipeline test:
 ```bash
-node test_pipeline.js
+npm test
 ```
