@@ -1,0 +1,33 @@
+{
+  "name": "ieee-parser",
+  "version": "1.0.0",
+  "description": "IEEE Technical Standards Parser, Rule Miner, Semantic Linker, and Agentic Auditor extension for Pi agent.",
+  "main": "src/index.ts",
+  "keywords": [
+    "pi-package",
+    "ieee",
+    "parser",
+    "compliance",
+    "auditing"
+  ],
+  "dependencies": {
+    "pdf-parse": "^2.4.5"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-agent-core": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "scripts": {
+    "test": "echo \"No tests defined\""
+  },
+  "author": "",
+  "license": "ISC"
+}

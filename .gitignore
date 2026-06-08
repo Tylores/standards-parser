@@ -1,0 +1,5 @@
+node_modules/
+dist/
+output_ieee_parser/
+.DS_Store
+*.log
