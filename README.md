@@ -11,7 +11,7 @@ This package is designed to be loaded directly by Pi agents as an extension, pro
 To install this extension in your Pi Agent workspace, run:
 
 ```bash
-pi install git:github.com/Tylores/ieee-parser
+pi install git:github.com/Tylores/standards-parser
 ```
 
 ---
