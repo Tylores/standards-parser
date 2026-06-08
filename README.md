@@ -6,7 +6,17 @@ This package is designed to be loaded directly by Pi agents as an extension, pro
 
 ---
 
-## 1. Pi Agent Extension Integration
+## 1. Installation
+
+To install this extension in your Pi Agent workspace, run:
+
+```bash
+pi install git:github.com/Tylores/ieee-parser
+```
+
+---
+
+## 2. Pi Agent Extension Integration
 
 This module is registered as a Pi package. When loaded by a Pi Agent, it automatically registers custom tools and slash commands.
 
@@ -33,7 +43,7 @@ This module is registered as a Pi package. When loaded by a Pi Agent, it automat
 
 ---
 
-## 2. Programmatic Usage (TypeScript / JavaScript)
+## 3. Programmatic Usage (TypeScript / JavaScript)
 
 You can also import and compose the pipeline components programmatically in your own TypeScript or Node.js scripts:
 
@@ -79,7 +89,7 @@ runPipeline().catch(console.error);
 
 ---
 
-## 3. Output Pipeline Artifacts
+## 4. Output Pipeline Artifacts
 
 By default, all pipeline assets are written to `./output_ieee_parser`:
 
@@ -92,23 +102,23 @@ By default, all pipeline assets are written to `./output_ieee_parser`:
 
 ---
 
-## 4. Codebase Reference
+## 5. Codebase Reference
 
 If you are an AI developer or agent extending or working with this codebase, please follow these guidelines:
 
 ### File and Class Maps
-- **Extension Registry**: [src/index.ts](file:///home/slay216/phd-dev/ieee_parser/src/index.ts) is the main entry point that registers the Pi tools and slash commands.
-- **Parser Logic**: Adjust headers/footers cleaning patterns or block merging rules in [src/parser.ts](file:///home/slay216/phd-dev/ieee_parser/src/parser.ts). Key exports: [PDFParser](file:///home/slay216/phd-dev/ieee_parser/src/parser.ts#L85), [buildHierarchyTree](file:///home/slay216/phd-dev/ieee_parser/src/parser.ts#L14), and [treeToMarkdown](file:///home/slay216/phd-dev/ieee_parser/src/parser.ts).
-- **Rule Extraction Patterns**: Modifying rule keywords (e.g., standard RFC conformance terms) or classification is done in [src/ruleMiner.ts](file:///home/slay216/phd-dev/ieee_parser/src/ruleMiner.ts). Key exports: [RuleMiner](file:///home/slay216/phd-dev/ieee_parser/src/ruleMiner.ts#L87) and [Rule](file:///home/slay216/phd-dev/ieee_parser/src/ruleMiner.ts#L75).
-- **Concept & Stopwords Definitions**: Smart grid terms and dynamic terminology configuration are managed in [src/semanticLinker.ts](file:///home/slay216/phd-dev/ieee_parser/src/semanticLinker.ts). Key exports: [SemanticLinker](file:///home/slay216/phd-dev/ieee_parser/src/semanticLinker.ts#L76) and [KnowledgeGraph](file:///home/slay216/phd-dev/ieee_parser/src/semanticLinker.ts#L71).
-- **System Prompt Templates**: The LLM audit critique prompt structure and evaluation instructions are defined in [src/auditing.ts](file:///home/slay216/phd-dev/ieee_parser/src/auditing.ts). Key exports: [RequirementAuditor](file:///home/slay216/phd-dev/ieee_parser/src/auditing.ts#L63).
+- **Extension Registry**: [src/index.ts](./src/index.ts) is the main entry point that registers the Pi tools and slash commands.
+- **Parser Logic**: Adjust headers/footers cleaning patterns or block merging rules in [src/parser.ts](./src/parser.ts). Key exports: [PDFParser](./src/parser.ts#L85), [buildHierarchyTree](./src/parser.ts#L14), and [treeToMarkdown](./src/parser.ts).
+- **Rule Extraction Patterns**: Modifying rule keywords (e.g., standard RFC conformance terms) or classification is done in [src/ruleMiner.ts](./src/ruleMiner.ts). Key exports: [RuleMiner](./src/ruleMiner.ts#L87) and [Rule](./src/ruleMiner.ts#L75).
+- **Concept & Stopwords Definitions**: Smart grid terms and dynamic terminology configuration are managed in [src/semanticLinker.ts](./src/semanticLinker.ts). Key exports: [SemanticLinker](./src/semanticLinker.ts#L76) and [KnowledgeGraph](./src/semanticLinker.ts#L71).
+- **System Prompt Templates**: The LLM audit critique prompt structure and evaluation instructions are defined in [src/auditing.ts](./src/auditing.ts). Key exports: [RequirementAuditor](./src/auditing.ts#L63).
 
 ### Development and Compilation
 To compile the TypeScript source files, run:
 ```bash
 npm run build # if configured, or run npx tsc
 ```
-This will generate JavaScript files with declarations in the `./dist` folder as configured in [tsconfig.json](file:///home/slay216/phd-dev/ieee_parser/tsconfig.json).
+This will generate JavaScript files with declarations in the `./dist` folder as configured in [tsconfig.json](./tsconfig.json).
 
 To run a pipeline test:
 ```bash
