@@ -1,8 +1,12 @@
 import { KnowledgeGraph, KGNode, KGEdge } from './semanticLinker.js';
+import { DomainConfig, GENERAL_STOPWORDS } from './presets.js';
+import { normalizeSection } from './parser.js';
 
-export const AUDIT_PROMPT_TEMPLATE = `You are an expert Systems Architect and Senior Security Engineer specializing in smart grid communications, mTLS security, and IEEE 2030.5 / SEP 2 protocol implementation.
+export const AUDIT_PROMPT_TEMPLATE = `You are an expert Systems Architect and Senior Systems Engineer specializing in standards analysis, compliance engineering, and high-integrity system specifications.
 
-Your task is to audit the selected requirement(s) extracted from a dense technical standard, analyzing them for semantic consistency, ambiguity, and implementation feasibility.
+{role_description}
+
+Your task is to audit the selected requirement(s) extracted from a technical standard, analyzing them for semantic consistency, ambiguity, implementation feasibility, and conformity to systems engineering best practices.
 
 ================================================================================
 1. TARGET REQUIREMENT(S) TO AUDIT
@@ -29,27 +33,29 @@ Your task is to audit the selected requirement(s) extracted from a dense technic
 ================================================================================
 {potential_conflicts}
 
+{additional_domain_info_section}
+
 ================================================================================
 CRITIQUE INSTRUCTIONS FOR THE LLM AUDITOR:
 ================================================================================
 Perform a rigorous, production-grade critique covering the following areas:
 
 1. **Ambiguity & Testability Analysis**:
-   - Assess if the requirement uses vague words (e.g., "appropriate", "efficient", "rapidly") without defining quantitative metrics or ranges.
+   - Assess if the requirement uses vague, non-measurable words (e.g., "appropriate", "efficient", "rapidly", "highly secure") without defining quantitative metrics or ranges.
    - Determine if the requirement can be verified via automated conformance testing.
 
 2. **Logical Consistency & Conflict Resolution**:
    - Evaluate the target requirement against the linked rules and potential conflicts.
-   - Identify contradictions (e.g., a "shall" contradicting a "shall not" or "may" on the same term in a different section).
+   - Identify contradictions (e.g., a "shall" contradicting a "shall not" or "may" on the same concept/term in a different section).
    - Pinpoint gaps or omissions in the surrounding context.
 
-3. **Smart Grid & IEEE 2030.5 Protocol Feasibility**:
-   - Discuss how this requirement affects system state machines, transaction integrity, transport security (mTLS), messaging latency, or payloads (e.g., XML/EXI structures in IEEE 2030.5).
-   - Highlight potential race conditions, timing failures (timeouts, heartbeats), or security vulnerabilities introduced by this specification.
+3. **System Architectural & Implementation Feasibility**:
+   - Discuss how this requirement affects system state machines, processing flows, transport overhead, latency constraints, or data payload structures.
+   - Highlight potential race conditions, edge-case timing failures, or performance bottlenecks introduced by this specification.
 
 4. **Proposed Revisions**:
    - Draft a revised version of the target requirement(s) that removes all ambiguities and resolves any identified contradictions.
-   - Provide concrete, deterministic, and clear language.
+   - Provide concrete, deterministic, and clear systems-engineering language.
 `;
 
 export interface AuditContext {
@@ -65,9 +71,9 @@ export class RequirementAuditor {
   private nodes: Record<string, KGNode>;
   private outEdges: Record<string, KGEdge[]>;
   private inEdges: Record<string, KGEdge[]>;
-  private domainConfig?: any;
+  private domainConfig?: Partial<DomainConfig> & { additionalDomainInfo?: string };
 
-  constructor(knowledgeGraph: KnowledgeGraph, domainConfig?: any) {
+  constructor(knowledgeGraph: KnowledgeGraph, domainConfig?: Partial<DomainConfig> & { additionalDomainInfo?: string }) {
     this.kg = knowledgeGraph;
     this.domainConfig = domainConfig;
     this.nodes = {};
@@ -90,17 +96,45 @@ export class RequirementAuditor {
     }
   }
 
+  private getDescendantRequirements(secNodeId: string, visited: Set<string>): { requirements: KGNode[], sections: KGNode[] } {
+    const requirements: KGNode[] = [];
+    const sections: KGNode[] = [];
+    const queue = [secNodeId];
+    while (queue.length > 0) {
+      const currentId = queue.shift()!;
+      for (const edge of this.outEdges[currentId] || []) {
+        if (edge.type === "CONTAINS") {
+          const targetId = edge.target;
+          if (visited.has(targetId)) continue;
+          visited.add(targetId);
+          if (targetId.startsWith("REQ-")) {
+            const reqNode = this.nodes[targetId];
+            if (reqNode) requirements.push(reqNode);
+          } else if (targetId.startsWith("SEC-")) {
+            const secNode = this.nodes[targetId];
+            if (secNode) {
+              sections.push(secNode);
+              queue.push(targetId);
+            }
+          }
+        }
+      }
+    }
+    return { requirements, sections };
+  }
+
   queryContext(query: string): AuditContext | null {
     const queryStrip = query.trim();
     let targetNodes: KGNode[] = [];
 
     // 1. Resolve query to exact node match if possible
-    if (queryStrip in this.nodes) {
-      targetNodes.push(this.nodes[queryStrip]);
+    const upperQuery = queryStrip.toUpperCase();
+    if (upperQuery in this.nodes) {
+      targetNodes.push(this.nodes[upperQuery]);
     } else {
       // Try matching Term name (e.g. TERM-termname) or Section number (e.g. SEC-secnum)
       const termId = `TERM-${queryStrip.toLowerCase()}`;
-      const secId = `SEC-${queryStrip}`;
+      const secId = `SEC-${normalizeSection(queryStrip)}`;
       if (termId in this.nodes) {
         targetNodes.push(this.nodes[termId]);
       } else if (secId in this.nodes) {
@@ -112,7 +146,7 @@ export class RequirementAuditor {
           const props = node.properties || {};
           if (label === "Term" && props.name?.toLowerCase() === queryStrip.toLowerCase()) {
             targetNodes.push(node);
-          } else if (label === "Section" && props.section_number === queryStrip) {
+          } else if (label === "Section" && normalizeSection(props.section_number) === normalizeSection(queryStrip)) {
             targetNodes.push(node);
           }
         }
@@ -121,7 +155,7 @@ export class RequirementAuditor {
 
     // 2. Flexible Audit Search (Token Overlap / TF-IDF Ranking)
     if (targetNodes.length === 0) {
-      const stopwords = this.domainConfig?.stopwords || [];
+      const stopwords = this.domainConfig?.stopwords || GENERAL_STOPWORDS;
       const queryTokens = queryStrip
         .toLowerCase()
         .split(/[^a-zA-Z0-9_\-\.]+/)
@@ -289,25 +323,9 @@ export class RequirementAuditor {
 
       // Case C: Query is a Section node
       } else if (nodeLabel === "Section") {
-        // Find all requirements contained (Outgoing CONTAINS to Requirement)
-        for (const edge of this.outEdges[nodeId] || []) {
-          const targetId = edge.target;
-          if (edge.type === "CONTAINS") {
-            if (targetId.startsWith("REQ-")) {
-              const reqNode = this.nodes[targetId];
-              if (reqNode && !visited.has(targetId)) {
-                linkedRequirements.push(reqNode);
-                visited.add(targetId);
-              }
-            } else if (targetId.startsWith("SEC-")) {
-              const childSec = this.nodes[targetId];
-              if (childSec && !visited.has(targetId)) {
-                linkedSections.push(childSec);
-                visited.add(targetId);
-              }
-            }
-          }
-        }
+        const descendants = this.getDescendantRequirements(nodeId, visited);
+        linkedRequirements.push(...descendants.requirements);
+        linkedSections.push(...descendants.sections);
       }
     }
 
@@ -375,19 +393,19 @@ export class RequirementAuditor {
 
     // Fill template
     let payload = this.domainConfig?.auditTemplate || AUDIT_PROMPT_TEMPLATE;
-    payload = payload.replace('{role_description}', this.domainConfig?.roleDescription || "Focus on overall clarity, deterministic behavior, testability, and structural completeness of the engineering requirements.");
+    payload = payload.replaceAll('{role_description}', this.domainConfig?.roleDescription || "Focus on overall clarity, deterministic behavior, testability, and structural completeness of the engineering requirements.");
     
     const addDomainInfo = this.domainConfig?.additionalDomainInfo;
     const addDomainInfoSec = addDomainInfo 
       ? `================================================================================\n6. ADDITIONAL DOMAIN & TARGET ENVIRONMENT INFO\n================================================================================\n${addDomainInfo}\n`
       : "";
-    payload = payload.replace('{additional_domain_info_section}', addDomainInfoSec);
+    payload = payload.replaceAll('{additional_domain_info_section}', addDomainInfoSec);
 
-    payload = payload.replace('{target_requirements}', targetRequirementsStr);
-    payload = payload.replace('{structural_context}', structuralContextStr);
-    payload = payload.replace('{linked_rules}', linkedRulesStr);
-    payload = payload.replace('{referenced_terms}', referencedTermsStr);
-    payload = payload.replace('{potential_conflicts}', potentialConflictsStr);
+    payload = payload.replaceAll('{target_requirements}', targetRequirementsStr);
+    payload = payload.replaceAll('{structural_context}', structuralContextStr);
+    payload = payload.replaceAll('{linked_rules}', linkedRulesStr);
+    payload = payload.replaceAll('{referenced_terms}', referencedTermsStr);
+    payload = payload.replaceAll('{potential_conflicts}', potentialConflictsStr);
 
     return payload;
   }

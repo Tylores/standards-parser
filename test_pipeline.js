@@ -6,7 +6,12 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 async function test() {
-  const pdfPath = '/home/slay216/phd-dev/sources/Slay and Bass - 2021 - An Energy Service Interface for Distributed Energy Resources.pdf';
+  const pdfPath = process.argv[2];
+  if (!pdfPath) {
+    console.error("Error: Missing target PDF standard file for testing.");
+    console.error("Usage: node test_pipeline.js <path_to_pdf_file>");
+    process.exit(1);
+  }
   const outputDir = './output_ieee_parser';
 
   console.log('--- STEP 1: PARSING PDF ---');

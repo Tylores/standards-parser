@@ -18,6 +18,16 @@ export interface KGEdge {
 export interface KnowledgeGraph {
     nodes: KGNode[];
     edges: KGEdge[];
+    metadata?: {
+        detected_domain?: string;
+        config?: {
+            name: string;
+            roleDescription: string;
+            stopwords: string[];
+            additionalDomainInfo?: string;
+            auditTemplate: string;
+        };
+    };
 }
 export declare class SemanticLinker {
     private topNTerms;

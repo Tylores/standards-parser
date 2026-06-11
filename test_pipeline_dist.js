@@ -7,7 +7,12 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 async function test() {
-  const pdfPath = '/home/slay216/phd-dev/sources/Slay and Bass - 2021 - An Energy Service Interface for Distributed Energy Resources.pdf';
+  const pdfPath = process.argv[2];
+  if (!pdfPath) {
+    console.error("Error: Missing target PDF standard file for testing.");
+    console.error("Usage: npm test -- <path_to_pdf_file>  OR  node test_pipeline_dist.js <path_to_pdf_file>");
+    process.exit(1);
+  }
   const outputDir = './output_generic_parser';
 
   console.log('--- STEP 1: INITIAL PASS FOR DOMAIN AUTO-DETECTION ---');

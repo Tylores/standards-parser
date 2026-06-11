@@ -1,6 +1,7 @@
 export declare const HEADING_REGEX: RegExp;
 export declare const LIST_PREFIX_REGEX: RegExp;
 export declare function normalizeSection(secNum: string): string;
+export declare function isAncestorSection(ancestor: string, descendent: string): boolean;
 export declare function isTableRow(line: string): boolean;
 export declare function cleanPageLines(lines: string[], cleanHeaders?: string[]): string[];
 export interface Block {
@@ -25,8 +26,8 @@ export declare class PDFParser {
     private pdfPath;
     private cleanHeaders?;
     constructor(pdfPath: string, cleanHeaders?: string[]);
-    getSampleText(): Promise<string>;
-    parse(): Promise<Block[]>;
+    getSampleText(signal?: AbortSignal): Promise<string>;
+    parse(signal?: AbortSignal): Promise<Block[]>;
     private assembleBlocks;
 }
 export declare function buildHierarchyTree(blocks: Block[]): TreeNode;

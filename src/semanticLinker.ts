@@ -1,4 +1,4 @@
-import { Block } from './parser.js';
+import { Block, normalizeSection } from './parser.js';
 import { Rule } from './ruleMiner.js';
 
 // List of common English stopwords to exclude from dynamic terminology extraction
@@ -50,7 +50,7 @@ export const CURATED_TERMS: Record<string, RegExp> = {
 };
 
 // Regex to detect explicit cross-references to other sections/clauses
-export const SECTION_REF_REGEX = /\b(?:Section|Clause)\s+(\d+(?:\.\d+)*)\b/gi;
+export const SECTION_REF_REGEX = /\b(?:Section|Clause|Annex)\s+((?:Annex\s+[A-Z]|[A-Z]|\d+)(?:\.\d+)*)\b/gi;
 
 // Regex to detect explicit cross-references to other requirements (e.g. "REQ-001")
 export const REQ_REF_REGEX = /\b(REQ-\d+)\b/g;
@@ -71,6 +71,16 @@ export interface KGEdge {
 export interface KnowledgeGraph {
   nodes: KGNode[];
   edges: KGEdge[];
+  metadata?: {
+    detected_domain?: string;
+    config?: {
+      name: string;
+      roleDescription: string;
+      stopwords: string[];
+      additionalDomainInfo?: string;
+      auditTemplate: string;
+    };
+  };
 }
 
 export class SemanticLinker {
@@ -93,7 +103,7 @@ export class SemanticLinker {
     const sectionTitles: Record<string, string> = {};
     for (const block of blocks) {
       if (block.type === "heading") {
-        sectionTitles[block.section_number] = block.heading_context[block.heading_context.length - 1];
+        sectionTitles[normalizeSection(block.section_number)] = block.heading_context[block.heading_context.length - 1];
       }
     }
 
@@ -125,26 +135,35 @@ export class SemanticLinker {
     // 4. Create Section Nodes and structural parent-child CONTAINS Edges
     const sectionsToCreate = new Set<string>();
     for (const block of blocks) {
-      if (block.section_number) sectionsToCreate.add(block.section_number);
+      if (block.section_number) sectionsToCreate.add(normalizeSection(block.section_number));
       for (const parent of block.parent_hierarchy || []) {
-        if (parent) sectionsToCreate.add(parent);
+        if (parent) sectionsToCreate.add(normalizeSection(parent));
       }
     }
     for (const rule of ruleLedger) {
-      if (rule.section_number) sectionsToCreate.add(rule.section_number);
+      if (rule.section_number) sectionsToCreate.add(normalizeSection(rule.section_number));
       for (const parent of rule.parent_hierarchy || []) {
-        if (parent) sectionsToCreate.add(parent);
+        if (parent) sectionsToCreate.add(normalizeSection(parent));
       }
     }
 
     const sortedSections = Array.from(sectionsToCreate).sort((a, b) => {
-      // Basic split-and-compare for sections (like 1.1 vs 2.1)
-      const aParts = a.split('.').map(Number);
-      const bParts = b.split('.').map(Number);
+      const cleanA = a.replace(/^Annex\s+/i, '');
+      const cleanB = b.replace(/^Annex\s+/i, '');
+      const aParts = cleanA.split('.');
+      const bParts = cleanB.split('.');
       for (let i = 0; i < Math.max(aParts.length, bParts.length); i++) {
-        const aVal = aParts[i] || 0;
-        const bVal = bParts[i] || 0;
-        if (aVal !== bVal) return aVal - bVal;
+        const aVal = aParts[i] || "";
+        const bVal = bParts[i] || "";
+        const aNum = parseInt(aVal, 10);
+        const bNum = parseInt(bVal, 10);
+        const isANum = !isNaN(aNum);
+        const isBNum = !isNaN(bNum);
+        if (isANum && isBNum) {
+          if (aNum !== bNum) return aNum - bNum;
+        } else if (aVal !== bVal) {
+          return aVal.localeCompare(bVal);
+        }
       }
       return 0;
     });
@@ -169,11 +188,7 @@ export class SemanticLinker {
       // Structural containment edges
       const parts = sec.split('.');
       if (parts.length > 1) {
-        let parentSec = parts.slice(0, -1).join('.');
-        if (!sectionsToCreate.has(parentSec) && sectionsToCreate.has(`${parentSec}.0`)) {
-          parentSec = `${parentSec}.0`;
-        }
-
+        const parentSec = parts.slice(0, -1).join('.');
         if (sectionsToCreate.has(parentSec)) {
           edges.push({
             source: `SEC-${parentSec}`,
@@ -191,6 +206,9 @@ export class SemanticLinker {
       termToReqs[term] = [];
     }
 
+    const localSectionRefRegex = new RegExp(SECTION_REF_REGEX.source, SECTION_REF_REGEX.flags);
+    const localReqRefRegex = new RegExp(REQ_REF_REGEX.source, REQ_REF_REGEX.flags);
+
     for (const rule of ruleLedger) {
       const reqId = rule.id;
       nodes.push({
@@ -206,7 +224,7 @@ export class SemanticLinker {
       insertedNodeIds.add(reqId);
 
       // Section -> CONTAINS -> Requirement Edge
-      const secId = `SEC-${rule.section_number}`;
+      const secId = `SEC-${normalizeSection(rule.section_number)}`;
       if (insertedNodeIds.has(secId)) {
         edges.push({
           source: secId,
@@ -235,10 +253,10 @@ export class SemanticLinker {
       }
 
       // Requirement -> REFERENCES -> Section Edges (explicit references like "refer to Section 4.2")
-      SECTION_REF_REGEX.lastIndex = 0; // reset
+      localSectionRefRegex.lastIndex = 0;
       let secMatch;
-      while ((secMatch = SECTION_REF_REGEX.exec(reqText)) !== null) {
-        const refSec = secMatch[1];
+      while ((secMatch = localSectionRefRegex.exec(reqText)) !== null) {
+        const refSec = normalizeSection(secMatch[1]);
         const refSecId = `SEC-${refSec}`;
         if (insertedNodeIds.has(refSecId)) {
           edges.push({
@@ -253,9 +271,9 @@ export class SemanticLinker {
       }
 
       // Requirement -> REFERENCES -> Requirement Edges (explicit references like "REQ-002")
-      REQ_REF_REGEX.lastIndex = 0; // reset
+      localReqRefRegex.lastIndex = 0;
       let reqMatch;
-      while ((reqMatch = REQ_REF_REGEX.exec(reqText)) !== null) {
+      while ((reqMatch = localReqRefRegex.exec(reqText)) !== null) {
         const refReq = reqMatch[1];
         if (refReq !== reqId) { // Avoid self-referencing
           edges.push({

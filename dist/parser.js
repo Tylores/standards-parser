@@ -5,15 +5,23 @@ import { readFileSync } from 'node:fs';
 // "4.1.2 Physical layer"
 // "Annex A (informative) - Title"
 // "A.1 General"
-export const HEADING_REGEX = /^\s*((?:Annex\s+[A-Z]\b\.?\s*)?(?:\d+(?:\.\d+)+|\d+|\b[A-Z](?:\.\d+)*))\.?\s+([A-Z\d_].*)$/;
+export const HEADING_REGEX = /^\s*((?:Annex\s+[A-Z](?:\.\d+)*|\d+(?:\.\d+)*|[A-Z](?:\.\d+)*))\.?\s+([a-zA-Z\d_\(\)\"\'“‘].*)$/i;
 // Regex to match list items like "• Bullet", "1) First", "a. Item"
 export const LIST_PREFIX_REGEX = /^\s*(•|[*+-]|\b\d+[\.\)]|\b[a-zA-Z][\.\)]|\(\d+\)|\([a-zA-Z]\))\s+(.*)$/;
 export function normalizeSection(secNum) {
-    const parts = secNum.split('.');
+    const clean = secNum.trim().replace(/^Annex\s+/i, '');
+    const parts = clean.split('.');
     while (parts.length > 1 && parts[parts.length - 1] === '0') {
         parts.pop();
     }
     return parts.join('.');
+}
+export function isAncestorSection(ancestor, descendent) {
+    const aParts = ancestor.split('.');
+    const dParts = descendent.split('.');
+    if (aParts.length >= dParts.length)
+        return false;
+    return aParts.every((part, idx) => dParts[idx] === part);
 }
 export function isTableRow(line) {
     const lineStrip = line.trim();
@@ -30,6 +38,11 @@ export function cleanPageLines(lines, cleanHeaders) {
         const lineStr = line.trim();
         if (!lineStr) {
             cleaned.push("");
+            continue;
+        }
+        // Never clean a line that matches the HEADING_REGEX
+        if (HEADING_REGEX.test(lineStr)) {
+            cleaned.push(line);
             continue;
         }
         // Check if line consists solely of a page number (digits or Roman numerals)
@@ -72,25 +85,50 @@ export class PDFParser {
         this.pdfPath = pdfPath;
         this.cleanHeaders = cleanHeaders;
     }
-    async getSampleText() {
+    async getSampleText(signal) {
+        let pdfParser = null;
         try {
+            if (signal?.aborted) {
+                throw new Error("PDF parsing aborted by user request.");
+            }
             const data = readFileSync(this.pdfPath);
-            const pdfParser = new PDFParse({ data });
+            pdfParser = new PDFParse({ data });
+            if (signal?.aborted) {
+                throw new Error("PDF parsing aborted by user request.");
+            }
             const textResult = await pdfParser.getText();
             // Concatenate the first few pages to detect standard type
             return (textResult.pages || []).slice(0, 3).map((p) => p.text || "").join("\n");
         }
-        catch {
+        catch (err) {
+            if (err.message === "PDF parsing aborted by user request.") {
+                throw err;
+            }
             return "";
         }
+        finally {
+            if (pdfParser) {
+                await pdfParser.destroy().catch(() => { });
+            }
+        }
     }
-    async parse() {
+    async parse(signal) {
         const pagesLinesAndTypes = [];
+        let pdfParser = null;
         try {
+            if (signal?.aborted) {
+                throw new Error("PDF parsing aborted by user request.");
+            }
             const data = readFileSync(this.pdfPath);
-            const pdfParser = new PDFParse({ data });
+            pdfParser = new PDFParse({ data });
+            if (signal?.aborted) {
+                throw new Error("PDF parsing aborted by user request.");
+            }
             const textResult = await pdfParser.getText();
             for (const page of textResult.pages) {
+                if (signal?.aborted) {
+                    throw new Error("PDF parsing aborted by user request.");
+                }
                 const pageNum = page.num;
                 const text = page.text;
                 if (!text)
@@ -98,6 +136,9 @@ export class PDFParser {
                 const rawLines = text.split('\n');
                 const cleanedLines = cleanPageLines(rawLines, this.cleanHeaders);
                 for (const line of cleanedLines) {
+                    if (signal?.aborted) {
+                        throw new Error("PDF parsing aborted by user request.");
+                    }
                     const lineStr = line.trim();
                     if (!lineStr) {
                         pagesLinesAndTypes.push([pageNum, "", "empty", null]);
@@ -126,7 +167,15 @@ export class PDFParser {
             }
         }
         catch (e) {
+            if (e.message === "PDF parsing aborted by user request.") {
+                throw e;
+            }
             throw new Error(`Error reading PDF page contents: ${e.message}`);
+        }
+        finally {
+            if (pdfParser) {
+                await pdfParser.destroy().catch(() => { });
+            }
         }
         return this.assembleBlocks(pagesLinesAndTypes);
     }
@@ -159,7 +208,7 @@ export class PDFParser {
                 activeSections[norm] = [sectionNumber, headingTitle];
                 // Deactivate sections that are not ancestors of the current heading
                 for (const k of Object.keys(activeSections)) {
-                    if (!(norm.startsWith(k + '.') || norm === k)) {
+                    if (!(isAncestorSection(k, norm) || norm === k)) {
                         delete activeSections[k];
                     }
                 }

@@ -1,9 +1,8 @@
 // Regex to match potential sentence boundaries: punctuation + optional closing quote,
 // followed by spacing, followed by a capital letter/quote/parenthesis.
 export const BOUNDARY_REGEX = /([.!?]["'”’\)]?)\s+(["'“‘\(]?[A-Z])/g;
-// Pattern to check if the text preceding the punctuation ends in a common abbreviation
-// or a single letter/digit (e.g. section number or list prefix).
-export const ABBREVIATION_PATTERN = /\b(?:e\.g|i\.e|vs|std|fig|no|approx|ref|et\s+al|[A-Za-z]|\d)$/i;
+// Pattern to check if the text preceding the punctuation ends in a common abbreviation.
+export const ABBREVIATION_PATTERN = /\b(?:e\.g|i\.e|vs|std|fig|no|approx|ref|et\s+al)$/i;
 // Rule keyword definitions with word boundaries
 export const RULE_PATTERNS = {
     Prohibition: [
@@ -30,9 +29,10 @@ export function splitSentences(text) {
     const textClean = text.replace(/\n/g, ' ');
     const sentences = [];
     let startIdx = 0;
-    BOUNDARY_REGEX.lastIndex = 0; // reset regex
+    // Create a local thread-safe instance of the stateful global regex
+    const localBoundaryRegex = new RegExp(BOUNDARY_REGEX.source, BOUNDARY_REGEX.flags);
     let match;
-    while ((match = BOUNDARY_REGEX.exec(textClean)) !== null) {
+    while ((match = localBoundaryRegex.exec(textClean)) !== null) {
         const matchStart1 = match.index;
         const precedingText = textClean.slice(startIdx, matchStart1).trim();
         // Check if the preceding text ends with an abbreviation or single letter/digit
@@ -47,7 +47,7 @@ export function splitSentences(text) {
         const matchStart2 = match.index + match[0].length - match[2].length;
         startIdx = matchStart2;
         // Advance global search position to avoid getting stuck or skipping parts
-        BOUNDARY_REGEX.lastIndex = matchStart2;
+        localBoundaryRegex.lastIndex = matchStart2;
     }
     // Append any remaining text
     const remaining = textClean.slice(startIdx).trim();
@@ -75,9 +75,12 @@ export class RuleMiner {
             else {
                 this.lastValidSection = sectionNumber;
             }
-            // Skip heading blocks as they don't contain requirement statements
+            // Skip heading blocks unless they contain requirement statements (misclassified paragraphs)
             if (block.type === "heading") {
-                continue;
+                const hasConstraints = block.text ? this.analyzeSentence(block.text).length > 0 : false;
+                if (!hasConstraints) {
+                    continue;
+                }
             }
             const blockText = block.text;
             if (!blockText) {
