@@ -9,12 +9,39 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { runGenericPipeline } from "./index.js";
 import { RequirementAuditor } from "./auditing.js";
-import { readFileSync, existsSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { readFile, access } from "node:fs/promises";
+import { join, resolve, relative, isAbsolute } from "node:path";
 import { KnowledgeGraph } from "./semanticLinker.js";
+import { Type, Static } from "typebox";
+import { Value } from "typebox/value";
 
-// Keep in-memory tracking of the last output directory in this session
-let lastOutputDir: string = "./output_standard_parser";
+// Error guards to prevent crashing on unhandled promise rejections or exceptions
+process.on("unhandledRejection", (reason) => {
+  console.error("Unhandled promise rejection in MCP server:", reason);
+});
+process.on("uncaughtException", (error) => {
+  console.error("Uncaught exception in MCP server:", error);
+});
+
+// TypeBox schemas for input validation
+const StandardParsePdfSchema = Type.Object({
+  pdf_path: Type.String({ minLength: 1 }),
+  output_dir: Type.Optional(Type.String()),
+  domain: Type.Optional(
+    Type.Union([
+      Type.Literal("auto"),
+      Type.Literal("generic"),
+      Type.Literal("smartGrid"),
+      Type.Literal("security"),
+    ])
+  ),
+  additional_domain_info: Type.Optional(Type.String()),
+});
+
+const StandardAuditQuerySchema = Type.Object({
+  query: Type.String({ minLength: 1 }),
+  output_dir: Type.String({ minLength: 1 }),
+});
 
 const server = new Server(
   {
@@ -27,6 +54,20 @@ const server = new Server(
     },
   }
 );
+
+// Helper to validate that resolved paths reside within the workspace base directory
+function validateSafePath(baseDir: string, targetPath: string): string {
+  const resolvedPath = resolve(baseDir, targetPath);
+  const rel = relative(baseDir, resolvedPath);
+  const isSafe = rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+  if (!isSafe) {
+    throw new McpError(
+      ErrorCode.InvalidParams,
+      `Access denied: path '${targetPath}' resolves outside the allowed base directory.`
+    );
+  }
+  return resolvedPath;
+}
 
 // Register the list of tools
 server.setRequestHandler(ListToolsRequestSchema, async () => {
@@ -45,11 +86,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             output_dir: {
               type: "string",
               description: "Relative or absolute path to save parsed outputs (default: './output_standard_parser')",
+              default: "./output_standard_parser",
             },
             domain: {
               type: "string",
               enum: ["auto", "generic", "smartGrid", "security"],
               description: "Domain preset ('auto', 'generic', 'smartGrid', 'security'). Default is 'auto'.",
+              default: "auto",
             },
             additional_domain_info: {
               type: "string",
@@ -71,10 +114,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             output_dir: {
               type: "string",
-              description: "Directory to load the knowledge graph from if not in memory (default: last output directory or './output_standard_parser')",
+              description: "Directory containing the parsed knowledge graph files (e.g., './output_standard_parser').",
             },
           },
-          required: ["query"],
+          required: ["query", "output_dir"],
         },
       },
     ],
@@ -87,30 +130,36 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   try {
     if (name === "standard_parse_pdf") {
-      const pdfPath = args?.pdf_path as string;
-      const outDir = (args?.output_dir as string) || "./output_standard_parser";
-      const domain = (args?.domain as "auto" | "generic" | "smartGrid" | "security") || "auto";
-      const additionalDomainInfo = args?.additional_domain_info as string;
-
-      if (!pdfPath) {
-        throw new McpError(ErrorCode.InvalidParams, "Missing pdf_path parameter");
+      // 1. Boundary validation using TypeBox
+      if (!Value.Check(StandardParsePdfSchema, args)) {
+        const errors = [...Value.Errors(StandardParsePdfSchema, args)]
+          .map((e) => `${e.instancePath.slice(1)}: ${e.message}`)
+          .join(", ");
+        throw new McpError(
+          ErrorCode.InvalidParams,
+          `Invalid parameters: ${errors}`
+        );
       }
 
-      // We run the pipeline. Since we are in the MCP server, ctx has process.cwd() as cwd,
-      // and we don't have Pi agent specific UI elements.
+      const validated = args as unknown as Static<typeof StandardParsePdfSchema>;
+      const rawPdfPath = validated.pdf_path;
+      const rawOutDir = validated.output_dir || "./output_standard_parser";
+      const domain = validated.domain || "auto";
+      const additionalDomainInfo = validated.additional_domain_info;
+
+      // 2. Safe path validation
+      const baseDir = process.cwd();
+      const pdfPath = validateSafePath(baseDir, rawPdfPath);
+      const outDir = validateSafePath(baseDir, rawOutDir);
+
       const ctx = {
-        cwd: process.cwd(),
+        cwd: baseDir,
       };
 
       const results = await runGenericPipeline(pdfPath, outDir, ctx, {
         domain,
         additionalDomainInfo,
       });
-
-      // Update the session's last output directory
-      if (results.absOutputDir) {
-        lastOutputDir = results.absOutputDir;
-      }
 
       const nodeSummary = Object.entries(results.nodes)
         .map(([k, v]) => `  - ${k}: ${v}`)
@@ -142,28 +191,42 @@ ${edgeSummary}`;
     }
 
     if (name === "standard_audit_query") {
-      const query = args?.query as string;
-      let searchDir = args?.output_dir as string;
-
-      if (!query) {
-        throw new McpError(ErrorCode.InvalidParams, "Missing query parameter");
+      // 1. Boundary validation using TypeBox
+      if (!Value.Check(StandardAuditQuerySchema, args)) {
+        const errors = [...Value.Errors(StandardAuditQuerySchema, args)]
+          .map((e) => `${e.instancePath.slice(1)}: ${e.message}`)
+          .join(", ");
+        throw new McpError(
+          ErrorCode.InvalidParams,
+          `Invalid parameters: ${errors}`
+        );
       }
 
-      if (!searchDir) {
-        searchDir = lastOutputDir || "./output_standard_parser";
-      }
+      const validated = args as unknown as Static<typeof StandardAuditQuerySchema>;
+      const query = validated.query;
+      const rawSearchDir = validated.output_dir;
 
-      const resolvedGraphPath = resolve(process.cwd(), join(searchDir, "knowledge_graph.json"));
-      if (!existsSync(resolvedGraphPath)) {
+      // 2. Safe path validation
+      const baseDir = process.cwd();
+      const searchDir = validateSafePath(baseDir, rawSearchDir);
+
+      const resolvedGraphPath = resolve(baseDir, join(searchDir, "knowledge_graph.json"));
+
+      // 3. Async existence check
+      try {
+        await access(resolvedGraphPath);
+      } catch {
         throw new McpError(
           ErrorCode.InvalidParams,
           `No active Knowledge Graph found in ${searchDir}. Please run 'standard_parse_pdf' first.`
         );
       }
 
+      // 4. Async file reading
       let graph: KnowledgeGraph;
       try {
-        const parsed = JSON.parse(readFileSync(resolvedGraphPath, "utf8"));
+        const fileContent = await readFile(resolvedGraphPath, "utf8");
+        const parsed = JSON.parse(fileContent);
         if (parsed && Array.isArray(parsed.nodes) && Array.isArray(parsed.edges)) {
           graph = parsed as KnowledgeGraph;
         } else {
@@ -190,7 +253,7 @@ ${edgeSummary}`;
       };
     }
 
-    throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
+    throw new McpError(ErrorCode.InvalidParams, `Unknown tool: ${name}`);
   } catch (err: any) {
     if (err instanceof McpError) {
       throw err;
@@ -218,3 +281,4 @@ main().catch((err) => {
   console.error("MCP Server failed to start:", err);
   process.exit(1);
 });
+
