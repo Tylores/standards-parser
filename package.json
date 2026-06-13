@@ -15,9 +15,14 @@
   "license": "ISC",
   "scripts": {
     "build": "tsc",
-    "test": "node test_pipeline_dist.js"
+    "test": "node test_pipeline_dist.js",
+    "start-mcp": "node dist/mcp-server.js"
+  },
+  "bin": {
+    "standards-parser-mcp": "./dist/mcp-server.js"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "pdf-parse": "^2.4.5"
   },
   "peerDependencies": {

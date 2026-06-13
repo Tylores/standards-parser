@@ -225,7 +225,10 @@ export class RequirementAuditor {
                 for (const edge of this.outEdges[nodeId] || []) {
                     const targetId = edge.target;
                     const edgeType = edge.type;
-                    if (edgeType === "REFERENCES" && targetId.startsWith("TERM-")) {
+                    const isTermEdge = edgeType === "REFERENCES" || edgeType === "CONSTRAINS" || edgeType === "RECOMMENDS" || edgeType === "PERMITS";
+                    const isSectionEdge = edgeType === "REFERENCES" || edgeType === "IMPLEMENTS" || edgeType === "DEPENDS_ON";
+                    const isReqEdge = edgeType === "REFERENCES" || edgeType === "DEPENDS_ON" || edgeType === "SUPERSEDES";
+                    if (isTermEdge && targetId.startsWith("TERM-")) {
                         const termNode = this.nodes[targetId];
                         if (termNode && !visited.has(targetId)) {
                             linkedTerms.push(termNode);
@@ -243,14 +246,14 @@ export class RequirementAuditor {
                             }
                         }
                     }
-                    else if (edgeType === "REFERENCES" && targetId.startsWith("SEC-")) {
+                    else if (isSectionEdge && targetId.startsWith("SEC-")) {
                         const refSec = this.nodes[targetId];
                         if (refSec && !visited.has(targetId)) {
                             linkedSections.push(refSec);
                             visited.add(targetId);
                         }
                     }
-                    else if (edgeType === "REFERENCES" && targetId.startsWith("REQ-")) {
+                    else if (isReqEdge && targetId.startsWith("REQ-")) {
                         const refReq = this.nodes[targetId];
                         if (refReq && !visited.has(targetId)) {
                             linkedRequirements.push(refReq);
@@ -282,9 +285,10 @@ export class RequirementAuditor {
                 // Case B: Query is a Term node
             }
             else if (nodeLabel === "Term") {
-                // Find all requirements referencing this term (Incoming REFERENCES)
+                // Find all requirements referencing this term (Incoming REFERENCES/CONSTRAINS/etc)
                 for (const edge of this.inEdges[nodeId] || []) {
-                    if (edge.type === "REFERENCES" && edge.source.startsWith("REQ-")) {
+                    const isTermEdge = edge.type === "REFERENCES" || edge.type === "CONSTRAINS" || edge.type === "RECOMMENDS" || edge.type === "PERMITS";
+                    if (isTermEdge && edge.source.startsWith("REQ-")) {
                         const reqNode = this.nodes[edge.source];
                         if (reqNode && !visited.has(reqNode.id)) {
                             linkedRequirements.push(reqNode);

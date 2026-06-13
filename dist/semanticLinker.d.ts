@@ -12,7 +12,7 @@ export interface KGNode {
 export interface KGEdge {
     source: string;
     target: string;
-    type: "CONTAINS" | "REFERENCES" | "CONFLICTS_WITH";
+    type: "CONTAINS" | "REFERENCES" | "CONFLICTS_WITH" | "CONSTRAINS" | "RECOMMENDS" | "PERMITS" | "DEPENDS_ON" | "IMPLEMENTS" | "SUPERSEDES";
     properties: Record<string, any>;
 }
 export interface KnowledgeGraph {
@@ -40,4 +40,5 @@ export declare class SemanticLinker {
     buildKnowledgeGraph(ruleLedger: Rule[], blocks: Block[]): KnowledgeGraph;
     private extractTerms;
     private escapeRegExp;
+    refineSemanticEdges(kg: KnowledgeGraph, ctx: any, signal?: AbortSignal): Promise<KnowledgeGraph>;
 }

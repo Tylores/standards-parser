@@ -1,5 +1,6 @@
 import { Block, normalizeSection } from './parser.js';
 import { Rule } from './ruleMiner.js';
+import { askLLM } from './llm.js';
 
 // List of common English stopwords to exclude from dynamic terminology extraction
 export const STOPWORDS = new Set([
@@ -64,7 +65,7 @@ export interface KGNode {
 export interface KGEdge {
   source: string;
   target: string;
-  type: "CONTAINS" | "REFERENCES" | "CONFLICTS_WITH";
+  type: "CONTAINS" | "REFERENCES" | "CONFLICTS_WITH" | "CONSTRAINS" | "RECOMMENDS" | "PERMITS" | "DEPENDS_ON" | "IMPLEMENTS" | "SUPERSEDES";
   properties: Record<string, any>;
 }
 
@@ -234,16 +235,25 @@ export class SemanticLinker {
         });
       }
 
-      // Requirement -> REFERENCES -> Term Edges
+      // Requirement -> REFERENCES/CONSTRAINS/RECOMMENDS -> Term Edges
       const reqText = rule.text;
       for (const [term, pattern] of Object.entries(termPatterns)) {
         pattern.lastIndex = 0; // reset
         if (pattern.test(reqText)) {
           const termId = `TERM-${term}`;
+          let edgeType: "REFERENCES" | "CONSTRAINS" | "RECOMMENDS" | "PERMITS" = "REFERENCES";
+          if (rule.constraint_type === "Mandatory" || rule.constraint_type === "Prohibition") {
+            edgeType = "CONSTRAINS";
+          } else if (rule.constraint_type === "Recommendation") {
+            edgeType = "RECOMMENDS";
+          } else if (rule.constraint_type === "Permission") {
+            edgeType = "PERMITS";
+          }
+
           edges.push({
             source: reqId,
             target: termId,
-            type: "REFERENCES",
+            type: edgeType,
             properties: {
               context: "text_mention"
             }
@@ -252,17 +262,25 @@ export class SemanticLinker {
         }
       }
 
-      // Requirement -> REFERENCES -> Section Edges (explicit references like "refer to Section 4.2")
+      // Requirement -> REFERENCES/IMPLEMENTS/DEPENDS_ON -> Section Edges (explicit references like "refer to Section 4.2")
       localSectionRefRegex.lastIndex = 0;
       let secMatch;
       while ((secMatch = localSectionRefRegex.exec(reqText)) !== null) {
         const refSec = normalizeSection(secMatch[1]);
         const refSecId = `SEC-${refSec}`;
         if (insertedNodeIds.has(refSecId)) {
+          const lowerText = reqText.toLowerCase();
+          let edgeType: "REFERENCES" | "IMPLEMENTS" | "DEPENDS_ON" = "REFERENCES";
+          if (/\b(comply|conform|implement|according to|defined in)\b/i.test(lowerText)) {
+            edgeType = "IMPLEMENTS";
+          } else if (/\b(require|depend|prerequisite|rely|relies)\b/i.test(lowerText)) {
+            edgeType = "DEPENDS_ON";
+          }
+
           edges.push({
             source: reqId,
             target: refSecId,
-            type: "REFERENCES",
+            type: edgeType,
             properties: {
               context: "explicit_section_ref"
             }
@@ -270,16 +288,24 @@ export class SemanticLinker {
         }
       }
 
-      // Requirement -> REFERENCES -> Requirement Edges (explicit references like "REQ-002")
+      // Requirement -> REFERENCES/DEPENDS_ON/SUPERSEDES -> Requirement Edges (explicit references like "REQ-002")
       localReqRefRegex.lastIndex = 0;
       let reqMatch;
       while ((reqMatch = localReqRefRegex.exec(reqText)) !== null) {
         const refReq = reqMatch[1];
         if (refReq !== reqId) { // Avoid self-referencing
+          const lowerText = reqText.toLowerCase();
+          let edgeType: "REFERENCES" | "DEPENDS_ON" | "SUPERSEDES" = "REFERENCES";
+          if (/\b(depend|require|prerequisite|conditional|rely|relies)\b/i.test(lowerText)) {
+            edgeType = "DEPENDS_ON";
+          } else if (/\b(supersede|replace|obsolete|deprecated)\b/i.test(lowerText)) {
+            edgeType = "SUPERSEDES";
+          }
+
           edges.push({
             source: reqId,
             target: refReq,
-            type: "REFERENCES",
+            type: edgeType,
             properties: {
               context: "explicit_requirement_ref"
             }
@@ -385,5 +411,117 @@ export class SemanticLinker {
 
   private escapeRegExp(str: string): string {
     return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  async refineSemanticEdges(
+    kg: KnowledgeGraph,
+    ctx: any,
+    signal?: AbortSignal
+  ): Promise<KnowledgeGraph> {
+    // Filter edges to refine: Requirement -> Requirement or Requirement -> Section
+    const candidateEdges = kg.edges.filter(edge => {
+      const isReqSource = edge.source.startsWith("REQ-");
+      const isTargetReqOrSec = edge.target.startsWith("REQ-") || edge.target.startsWith("SEC-");
+      const isContainOrConflict = edge.type === "CONTAINS" || edge.type === "CONFLICTS_WITH";
+      return isReqSource && isTargetReqOrSec && !isContainOrConflict;
+    });
+
+    if (candidateEdges.length === 0) {
+      return kg;
+    }
+
+    // Map requirement IDs to their text for prompt context
+    const reqTextMap: Record<string, string> = {};
+    for (const node of kg.nodes) {
+      if (node.label === "Requirement" && node.properties?.text) {
+        reqTextMap[node.id] = node.properties.text;
+      }
+    }
+
+    const batchSize = 15;
+    const refinedTypeMap = new Map<string, string>(); // key: "source|target", value: refinedType
+
+    for (let i = 0; i < candidateEdges.length; i += batchSize) {
+      if (signal?.aborted) {
+        throw new Error("Semantic edge refinement aborted by user request.");
+      }
+      const batch = candidateEdges.slice(i, i + batchSize);
+      const batchPromptEdges = batch.map(e => ({
+        source: e.source,
+        target: e.target,
+        text: reqTextMap[e.source] || ""
+      })).filter(item => item.text !== "");
+
+      if (batchPromptEdges.length === 0) continue;
+
+      const systemPrompt = `You are an expert systems engineering and compliance analyst.
+Your task is to analyze relationship edges between compliance requirements and other sections or requirements, and refine their edge types based on their context sentences.
+
+Available Edge Types:
+1. "DEPENDS_ON": If the source requirement explicitly depends on, requires, relies on, or is conditional on the target section/requirement to be met.
+2. "IMPLEMENTS": If the source requirement implements, conforms to, complies with, or satisfies the specifications defined in the target section/requirement.
+3. "SUPERSEDES": If the source requirement replaces, deprecates, or overrides the target section/requirement.
+4. "REFERENCES": If it is just a neutral reference or mention (e.g., "refer to Section 4.2", "see REQ-001") without dependency or implementation obligations.
+
+For each edge in the input, read the provided source requirement text and determine the most appropriate refined Edge Type.
+You must output a JSON array of objects, each containing:
+- "source": The source requirement ID.
+- "target": The target section/requirement ID.
+- "refinedType": The chosen edge type ("DEPENDS_ON", "IMPLEMENTS", "SUPERSEDES", or "REFERENCES").
+
+Respond with valid JSON ONLY. Do not wrap in markdown or backticks.`;
+
+      const userPrompt = `Here are the edges and their context sentences to refine:\n\n${JSON.stringify(batchPromptEdges, null, 2)}`;
+
+      try {
+        const text = await askLLM({ systemPrompt, userPrompt, signal }, ctx);
+        if (!text) {
+          console.warn("No LLM context/keys found or LLM failed. Skipping semantic edge refinement.");
+          break;
+        }
+
+        let cleanText = text.trim();
+        if (cleanText.startsWith("```json")) {
+          cleanText = cleanText.substring(7);
+        } else if (cleanText.startsWith("```")) {
+          cleanText = cleanText.substring(3);
+        }
+        if (cleanText.endsWith("```")) {
+          cleanText = cleanText.substring(0, cleanText.length - 3);
+        }
+
+        const parsed = JSON.parse(cleanText.trim());
+        if (Array.isArray(parsed)) {
+          for (const item of parsed) {
+            const src = item.source;
+            const tgt = item.target;
+            const refType = item.refinedType;
+            const validTypes = ["DEPENDS_ON", "IMPLEMENTS", "SUPERSEDES", "REFERENCES"];
+            if (src && tgt && validTypes.includes(refType)) {
+              refinedTypeMap.set(`${src}|${tgt}`, refType);
+            }
+          }
+        }
+      } catch (err: any) {
+        console.error(`Failed to refine semantic edges for batch starting at index ${i}:`, err.message);
+      }
+    }
+
+    // Apply refinements to the Knowledge Graph
+    const refinedEdges = kg.edges.map(edge => {
+      const key = `${edge.source}|${edge.target}`;
+      if (refinedTypeMap.has(key)) {
+        return {
+          ...edge,
+          type: refinedTypeMap.get(key) as any
+        };
+      }
+      return edge;
+    });
+
+    return {
+      ...kg,
+      edges: refinedEdges
+    };
   }
 }

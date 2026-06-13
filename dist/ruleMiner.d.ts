@@ -20,4 +20,5 @@ export declare class RuleMiner {
     constructor(startId?: number);
     mineRules(blocks: Block[]): Rule[];
     private analyzeSentence;
+    mineImplicitRules(blocks: Block[], existingRules: Rule[], ctx: any, signal?: AbortSignal): Promise<Rule[]>;
 }

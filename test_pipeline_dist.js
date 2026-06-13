@@ -3,6 +3,7 @@ import { RuleMiner } from './dist/ruleMiner.js';
 import { SemanticLinker } from './dist/semanticLinker.js';
 import { RequirementAuditor } from './dist/auditing.js';
 import { detectDomainPreset, getDomainConfig } from './dist/presets.js';
+import { generateExplorerHtml } from './dist/visualizer.js';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
@@ -56,6 +57,11 @@ async function test() {
   console.log('Nodes count:', kg.nodes.length);
   console.log('Edges count:', kg.edges.length);
   writeFileSync(join(outputDir, 'knowledge_graph.json'), JSON.stringify(kg, null, 2), 'utf8');
+
+  // Generate and save interactive HTML explorer
+  const explorerHtml = generateExplorerHtml(kg);
+  writeFileSync(join(outputDir, 'graph_explorer.html'), explorerHtml, 'utf8');
+  console.log('Interactive Graph Explorer generated: graph_explorer.html');
 
   console.log('--- STEP 5: FLEXIBLE TF-IDF AUDITING (GENERAL QUERY) ---');
   const auditor = new RequirementAuditor(kg, domainConfig);

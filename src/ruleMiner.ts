@@ -1,4 +1,5 @@
 import { Block } from './parser.js';
+import { askLLM } from './llm.js';
 
 // Regex to match potential sentence boundaries: punctuation + optional closing quote,
 // followed by spacing, followed by a capital letter/quote/parenthesis.
@@ -173,5 +174,109 @@ export class RuleMiner {
       }
     }
     return matches;
+  }
+
+  async mineImplicitRules(
+    blocks: Block[],
+    existingRules: Rule[],
+    ctx: any,
+    signal?: AbortSignal
+  ): Promise<Rule[]> {
+    const matchedBlockIds = new Set(existingRules.map(r => r.source_block_id));
+    const candidateBlocks = blocks.filter(b => {
+      if (b.type === "heading" || b.type === "table") return false;
+      if (matchedBlockIds.has(b.id)) return false;
+      return /\b(required|mandatory|ensure|strictly|necessary|obligation|responsible|is\s+to|are\s+to|has\s+to|have\s+to)\b/i.test(b.text);
+    });
+
+    if (candidateBlocks.length === 0) {
+      return [];
+    }
+
+    const batchSize = 8;
+    const implicitRules: Rule[] = [];
+
+    for (let i = 0; i < candidateBlocks.length; i += batchSize) {
+      if (signal?.aborted) {
+        throw new Error("Implicit requirement mining aborted by user request.");
+      }
+      const batch = candidateBlocks.slice(i, i + batchSize);
+      const batchPromptBlocks = batch.map(b => ({
+        id: b.id,
+        section: b.section_number,
+        text: b.text
+      }));
+
+      const systemPrompt = `You are an expert systems engineer and compliance analyst.
+Your task is to analyze technical document text blocks and extract any compliance requirements, obligations, or design constraints that are NOT matched by simple keyword regexes (such as shall/must/should/may).
+
+For each extracted requirement, you must return:
+1. "blockId": The ID of the block the requirement was extracted from.
+2. "constraintType": The severity/type of the requirement:
+   - "Mandatory" (if it is a strict requirement, e.g. "is required to", "is mandatory", "strictly necessary")
+   - "Prohibition" (if it is strictly forbidden)
+   - "Recommendation" (if it is a strong recommendation, e.g. "is recommended", "ought to")
+   - "Permission" (if it is allowed/optional, e.g. "is permitted", "can optionally")
+3. "requirementText": The exact sentence or a slightly cleaned sentence containing the requirement.
+
+Output must be a JSON array of objects with fields "blockId", "constraintType", and "requirementText".
+If no requirements are found in the blocks, return an empty array [].
+Respond with valid JSON ONLY. Do not wrap in markdown or backticks.`;
+
+      const userPrompt = `Here are the candidate text blocks to analyze:\n\n${JSON.stringify(batchPromptBlocks, null, 2)}`;
+
+      try {
+        const text = await askLLM({ systemPrompt, userPrompt, signal }, ctx);
+        if (!text) {
+          console.warn("No LLM context/keys found or LLM failed. Skipping implicit requirement mining.");
+          break;
+        }
+
+        let cleanText = text.trim();
+        if (cleanText.startsWith("```json")) {
+          cleanText = cleanText.substring(7);
+        } else if (cleanText.startsWith("```")) {
+          cleanText = cleanText.substring(3);
+        }
+        if (cleanText.endsWith("```")) {
+          cleanText = cleanText.substring(0, cleanText.length - 3);
+        }
+
+        const parsed = JSON.parse(cleanText.trim());
+        if (Array.isArray(parsed)) {
+          for (const item of parsed) {
+            const blockId = item.blockId;
+            const originalBlock = batch.find(b => b.id === blockId);
+            if (!originalBlock) continue;
+
+            const cType = item.constraintType;
+            const validTypes = ["Prohibition", "Mandatory", "Recommendation", "Permission"];
+            if (!validTypes.includes(cType)) continue;
+
+            const reqText = item.requirementText;
+            if (!reqText || typeof reqText !== "string") continue;
+
+            const reqId = `REQ-${this.reqCounter.toString().padStart(3, '0')}`;
+            this.reqCounter++;
+
+            implicitRules.push({
+              id: reqId,
+              section_number: originalBlock.section_number || "UNKNOWN",
+              parent_hierarchy: [...originalBlock.parent_hierarchy],
+              heading_context: [...originalBlock.heading_context],
+              constraint_type: cType as any,
+              all_matched_constraints: ["LLM_EXTRACTED"],
+              text: reqText,
+              source_block_id: originalBlock.id,
+              page_number: originalBlock.page_number
+            });
+          }
+        }
+      } catch (err: any) {
+        console.error(`Failed to mine implicit rules for batch starting at index ${i}:`, err.message);
+      }
+    }
+
+    return implicitRules;
   }
 }

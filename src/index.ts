@@ -5,10 +5,10 @@ import { join, resolve } from "node:path";
 import { PDFParser, buildHierarchyTree, treeToMarkdown, Block } from "./parser.js";
 import { RuleMiner, Rule } from "./ruleMiner.js";
 import { SemanticLinker, KnowledgeGraph } from "./semanticLinker.js";
+import { generateExplorerHtml } from "./visualizer.js";
 import { RequirementAuditor } from "./auditing.js";
 import { detectDomainPreset, getDomainConfig, GENERAL_STOPWORDS, GENERIC_TEMPLATE } from "./presets.js";
-import { complete } from "@earendil-works/pi-ai";
-import type { Context } from "@earendil-works/pi-ai";
+import { askLLM } from "./llm.js";
 
 interface ParserState {
   lastOutputDir: string;
@@ -22,7 +22,7 @@ function parseArgsWithQuotes(args: string): string[] {
 
 async function inferDomainKnowledge(
   sampleText: string,
-  ctx: ExtensionContext,
+  ctx: any,
   signal?: AbortSignal
 ): Promise<{
   domainName: string;
@@ -30,16 +30,7 @@ async function inferDomainKnowledge(
   curatedTerms: string[];
   roleDescription: string;
 } | null> {
-  const model = ctx.model || ctx.modelRegistry.getAvailable()[0] || ctx.modelRegistry.getAll()[0];
-  if (!model) {
-    return null;
-  }
-
   try {
-    const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
-    const apiKey = auth.ok ? auth.apiKey : undefined;
-    const headers = auth.ok ? auth.headers : undefined;
-
     const systemPrompt = `You are an expert technical standards analyst and systems engineer.
 Your task is to analyze the introductory pages of a technical standard or manual, and infer key domain knowledge to configure a compliance parser and auditor.
 
@@ -53,22 +44,9 @@ Response must be valid JSON ONLY. Do not wrap in markdown or backticks.`;
 
     const userPrompt = `Here is the sample text (first few pages) of the standard:\n\n${sampleText}`;
 
-    const context: Context = {
-      systemPrompt,
-      messages: [{ role: "user", content: userPrompt, timestamp: Date.now() }]
-    };
-
-    const response = await complete(model, context, {
-      apiKey,
-      headers,
-      signal
-    });
-    
-    let text = "";
-    for (const block of response.content) {
-      if (block.type === "text") {
-        text += block.text;
-      }
+    const text = await askLLM({ systemPrompt, userPrompt, signal }, ctx);
+    if (!text) {
+      return null;
     }
 
     let cleanText = text.trim();
@@ -96,89 +74,89 @@ Response must be valid JSON ONLY. Do not wrap in markdown or backticks.`;
   return null;
 }
 
-export default function (pi: ExtensionAPI) {
-  // Reconstruct active state status on session start
-  pi.on("session_start", async (_event, ctx) => {
-    ctx.ui.notify("Standards PDF Parser & Auditor extension loaded!", "info");
-  });
+// Helper function to run the full generic pipeline
+export async function runGenericPipeline(
+  pdfPath: string,
+  outputDir: string,
+  ctx: any,
+  options?: {
+    domain?: "auto" | "generic" | "smartGrid" | "security";
+    additionalTerms?: Record<string, string>;
+    additionalStopwords?: string[];
+    additionalCleanHeaders?: string[];
+    additionalDomainInfo?: string;
+    signal?: AbortSignal;
+  },
+  pi?: any
+) {
+  const cwd = ctx?.cwd || process.cwd();
+  const absPdfPath = resolve(cwd, pdfPath);
+  if (!existsSync(absPdfPath)) {
+    throw new Error(`Target PDF file not found at: ${pdfPath}`);
+  }
 
-  // Helper function to run the full generic pipeline
-  async function runGenericPipeline(
-    pdfPath: string,
-    outputDir: string,
-    ctx: ExtensionContext,
-    options?: {
-      domain?: "auto" | "generic" | "smartGrid" | "security";
-      additionalTerms?: Record<string, string>;
-      additionalStopwords?: string[];
-      additionalCleanHeaders?: string[];
-      additionalDomainInfo?: string;
-      signal?: AbortSignal;
-    }
-  ) {
-    const absPdfPath = resolve(ctx.cwd, pdfPath);
-    if (!existsSync(absPdfPath)) {
-      throw new Error(`Target PDF file not found at: ${pdfPath}`);
-    }
+  const absOutputDir = resolve(cwd, outputDir);
+  mkdirSync(absOutputDir, { recursive: true });
 
-    const absOutputDir = resolve(ctx.cwd, outputDir);
-    mkdirSync(absOutputDir, { recursive: true });
+  // Step 1: Detect standard domain preset or dynamically infer domain config
+  const initialParser = new PDFParser(absPdfPath);
+  let selectedDomain: string = options?.domain || "auto";
+  let domainConfig;
 
-    // Step 1: Detect standard domain preset or dynamically infer domain config
-    const initialParser = new PDFParser(absPdfPath);
-    let selectedDomain: string = options?.domain || "auto";
-    let domainConfig;
-
-    if (selectedDomain === "auto") {
-      const sampleText = await initialParser.getSampleText(options?.signal);
+  if (selectedDomain === "auto") {
+    const sampleText = await initialParser.getSampleText(options?.signal);
+    if (ctx?.ui?.notify) {
       ctx.ui.notify("Pre-parsing PDF standard to infer domain knowledge...", "info");
-      const inferred = await inferDomainKnowledge(sampleText, ctx, options?.signal);
-      
-      if (inferred) {
-        ctx.ui.notify(`Successfully inferred domain: ${inferred.domainName}`, "info");
-        selectedDomain = inferred.domainName;
-
-        const curatedTermsRecord: Record<string, RegExp> = {};
-        for (const term of inferred.curatedTerms) {
-          const termClean = term.trim().toLowerCase();
-          if (!termClean) continue;
-          const escaped = termClean.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-          curatedTermsRecord[termClean] = new RegExp(`\\b${escaped}s?\\b`, 'i');
-        }
-
-        if (options?.additionalTerms) {
-          for (const [k, v] of Object.entries(options.additionalTerms)) {
-            curatedTermsRecord[k] = new RegExp(`\\b${v}s?\\b`, 'i');
-          }
-        }
-
-        const mergedStopwords = Array.from(
-          new Set([...GENERAL_STOPWORDS, ...(options?.additionalStopwords || [])])
-        );
-        const mergedCleanHeaders = Array.from(
-          new Set([...inferred.cleanHeaders, ...(options?.additionalCleanHeaders || [])])
-        );
-
-        domainConfig = {
-          name: inferred.domainName,
-          curatedTerms: curatedTermsRecord,
-          stopwords: mergedStopwords,
-          cleanHeaders: mergedCleanHeaders,
-          roleDescription: inferred.roleDescription,
-          auditTemplate: GENERIC_TEMPLATE,
-          additionalDomainInfo: options?.additionalDomainInfo
-        };
-      } else {
-        ctx.ui.notify("Falling back to rule-based domain detection...", "warning");
-        selectedDomain = detectDomainPreset(sampleText);
-        domainConfig = getDomainConfig(selectedDomain, {
-          additionalTerms: options?.additionalTerms,
-          additionalStopwords: options?.additionalStopwords,
-          additionalCleanHeaders: options?.additionalCleanHeaders,
-          additionalDomainInfo: options?.additionalDomainInfo
-        });
-      }
     } else {
+      console.log("Pre-parsing PDF standard to infer domain knowledge...");
+    }
+    const inferred = await inferDomainKnowledge(sampleText, ctx, options?.signal);
+    
+    if (inferred) {
+      if (ctx?.ui?.notify) {
+        ctx.ui.notify(`Successfully inferred domain: ${inferred.domainName}`, "info");
+      } else {
+        console.log(`Successfully inferred domain: ${inferred.domainName}`);
+      }
+      selectedDomain = inferred.domainName;
+
+      const curatedTermsRecord: Record<string, RegExp> = {};
+      for (const term of inferred.curatedTerms) {
+        const termClean = term.trim().toLowerCase();
+        if (!termClean) continue;
+        const escaped = termClean.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+        curatedTermsRecord[termClean] = new RegExp(`\\b${escaped}s?\\b`, 'i');
+      }
+
+      if (options?.additionalTerms) {
+        for (const [k, v] of Object.entries(options.additionalTerms)) {
+          curatedTermsRecord[k] = new RegExp(`\\b${v}s?\\b`, 'i');
+        }
+      }
+
+      const mergedStopwords = Array.from(
+        new Set([...GENERAL_STOPWORDS, ...(options?.additionalStopwords || [])])
+      );
+      const mergedCleanHeaders = Array.from(
+        new Set([...inferred.cleanHeaders, ...(options?.additionalCleanHeaders || [])])
+      );
+
+      domainConfig = {
+        name: inferred.domainName,
+        curatedTerms: curatedTermsRecord,
+        stopwords: mergedStopwords,
+        cleanHeaders: mergedCleanHeaders,
+        roleDescription: inferred.roleDescription,
+        auditTemplate: GENERIC_TEMPLATE,
+        additionalDomainInfo: options?.additionalDomainInfo
+      };
+    } else {
+      if (ctx?.ui?.notify) {
+        ctx.ui.notify("Falling back to rule-based domain detection...", "warning");
+      } else {
+        console.log("Falling back to rule-based domain detection...");
+      }
+      selectedDomain = detectDomainPreset(sampleText);
       domainConfig = getDomainConfig(selectedDomain, {
         additionalTerms: options?.additionalTerms,
         additionalStopwords: options?.additionalStopwords,
@@ -186,73 +164,117 @@ export default function (pi: ExtensionAPI) {
         additionalDomainInfo: options?.additionalDomainInfo
       });
     }
-
-    // Step 2: Parse PDF with custom clean headers
-    const parser = new PDFParser(absPdfPath, domainConfig.cleanHeaders);
-    const blocks = await parser.parse(options?.signal);
-
-    const blocksPath = join(absOutputDir, "blocks.json");
-    writeFileSync(blocksPath, JSON.stringify(blocks, null, 2), "utf8");
-
-    const tree = buildHierarchyTree(blocks);
-    const treePath = join(absOutputDir, "tree.json");
-    writeFileSync(treePath, JSON.stringify(tree, null, 2), "utf8");
-
-    const mdContent = treeToMarkdown(tree);
-    const markdownPath = join(absOutputDir, "document_cleaned.md");
-    writeFileSync(markdownPath, mdContent, "utf8");
-
-    // Step 3: Mine Rules
-    const miner = new RuleMiner();
-    const ruleLedger = miner.mineRules(blocks);
-    const ledgerPath = join(absOutputDir, "ledger.json");
-    writeFileSync(ledgerPath, JSON.stringify(ruleLedger, null, 2), "utf8");
-
-    // Step 4: Semantic Linker & Knowledge Graph
-    const linker = new SemanticLinker(20, {
-      curatedTerms: domainConfig.curatedTerms,
-      stopwords: domainConfig.stopwords
+  } else {
+    domainConfig = getDomainConfig(selectedDomain, {
+      additionalTerms: options?.additionalTerms,
+      additionalStopwords: options?.additionalStopwords,
+      additionalCleanHeaders: options?.additionalCleanHeaders,
+      additionalDomainInfo: options?.additionalDomainInfo
     });
-    const kg = linker.buildKnowledgeGraph(ruleLedger, blocks);
-
-    // Save metadata inside knowledge graph JSON
-    kg.metadata = {
-      detected_domain: selectedDomain,
-      config: {
-        name: domainConfig.name,
-        roleDescription: domainConfig.roleDescription,
-        stopwords: domainConfig.stopwords,
-        additionalDomainInfo: domainConfig.additionalDomainInfo,
-        auditTemplate: domainConfig.auditTemplate
-      }
-    };
-
-    const graphPath = join(absOutputDir, "knowledge_graph.json");
-    writeFileSync(graphPath, JSON.stringify(kg, null, 2), "utf8");
-
-    // Persist path in session
-    pi.appendEntry("standard-parser-state", { lastOutputDir: absOutputDir, domain: selectedDomain });
-
-    // Node & Edge Counts
-    const nodeCounts: Record<string, number> = {};
-    for (const node of kg.nodes) {
-      nodeCounts[node.label] = (nodeCounts[node.label] || 0) + 1;
-    }
-    const edgeCounts: Record<string, number> = {};
-    for (const edge of kg.edges) {
-      edgeCounts[edge.type] = (edgeCounts[edge.type] || 0) + 1;
-    }
-
-    return {
-      blocksCount: blocks.length,
-      rulesCount: ruleLedger.length,
-      nodes: nodeCounts,
-      edges: edgeCounts,
-      absOutputDir,
-      detectedDomain: selectedDomain,
-      domainConfig
-    };
   }
+
+  // Step 2: Parse PDF with custom clean headers
+  const parser = new PDFParser(absPdfPath, domainConfig.cleanHeaders);
+  const blocks = await parser.parse(options?.signal);
+
+  const blocksPath = join(absOutputDir, "blocks.json");
+  writeFileSync(blocksPath, JSON.stringify(blocks, null, 2), "utf8");
+
+  const tree = buildHierarchyTree(blocks);
+  const treePath = join(absOutputDir, "tree.json");
+  writeFileSync(treePath, JSON.stringify(tree, null, 2), "utf8");
+
+  const mdContent = treeToMarkdown(tree);
+  const markdownPath = join(absOutputDir, "document_cleaned.md");
+  writeFileSync(markdownPath, mdContent, "utf8");
+
+  // Step 3: Mine Rules
+  const miner = new RuleMiner();
+  const ruleLedger = miner.mineRules(blocks);
+
+  // Call LLM for implicit requirements if context model is available
+  try {
+    const implicitRules = await miner.mineImplicitRules(blocks, ruleLedger, ctx, options?.signal);
+    if (implicitRules.length > 0) {
+      ruleLedger.push(...implicitRules);
+      if (ctx?.ui?.notify) {
+        ctx.ui.notify(`Mined ${implicitRules.length} additional implicit requirements using LLM.`, "info");
+      } else {
+        console.log(`Mined ${implicitRules.length} additional implicit requirements using LLM.`);
+      }
+    }
+  } catch (err: any) {
+    console.warn("LLM implicit rule mining skipped or failed:", err.message);
+  }
+
+  const ledgerPath = join(absOutputDir, "ledger.json");
+  writeFileSync(ledgerPath, JSON.stringify(ruleLedger, null, 2), "utf8");
+
+  // Step 4: Semantic Linker & Knowledge Graph
+  const linker = new SemanticLinker(20, {
+    curatedTerms: domainConfig.curatedTerms,
+    stopwords: domainConfig.stopwords
+  });
+  let kg = linker.buildKnowledgeGraph(ruleLedger, blocks);
+
+  // Call LLM semantic edge refiner if context model is available
+  try {
+    kg = await linker.refineSemanticEdges(kg, ctx, options?.signal);
+  } catch (err: any) {
+    console.warn("LLM semantic edge refinement skipped or failed:", err.message);
+  }
+
+  // Save metadata inside knowledge graph JSON
+  kg.metadata = {
+    detected_domain: selectedDomain,
+    config: {
+      name: domainConfig.name,
+      roleDescription: domainConfig.roleDescription,
+      stopwords: domainConfig.stopwords,
+      additionalDomainInfo: domainConfig.additionalDomainInfo,
+      auditTemplate: domainConfig.auditTemplate
+    }
+  };
+
+  const graphPath = join(absOutputDir, "knowledge_graph.json");
+  writeFileSync(graphPath, JSON.stringify(kg, null, 2), "utf8");
+
+  // Generate and save interactive HTML explorer
+  const explorerHtml = generateExplorerHtml(kg);
+  const explorerPath = join(absOutputDir, "graph_explorer.html");
+  writeFileSync(explorerPath, explorerHtml, "utf8");
+
+  // Persist path in session
+  if (pi?.appendEntry) {
+    pi.appendEntry("standard-parser-state", { lastOutputDir: absOutputDir, domain: selectedDomain });
+  }
+
+  // Node & Edge Counts
+  const nodeCounts: Record<string, number> = {};
+  for (const node of kg.nodes) {
+    nodeCounts[node.label] = (nodeCounts[node.label] || 0) + 1;
+  }
+  const edgeCounts: Record<string, number> = {};
+  for (const edge of kg.edges) {
+    edgeCounts[edge.type] = (edgeCounts[edge.type] || 0) + 1;
+  }
+
+  return {
+    blocksCount: blocks.length,
+    rulesCount: ruleLedger.length,
+    nodes: nodeCounts,
+    edges: edgeCounts,
+    absOutputDir,
+    detectedDomain: selectedDomain,
+    domainConfig
+  };
+}
+
+export default function (pi: ExtensionAPI) {
+  // Reconstruct active state status on session start
+  pi.on("session_start", async (_event, ctx) => {
+    ctx.ui.notify("Standards PDF Parser & Auditor extension loaded!", "info");
+  });
 
   // Register Custom Tools
   pi.registerTool({
@@ -287,6 +309,7 @@ export default function (pi: ExtensionAPI) {
 Detected Domain: ${results.detectedDomain.toUpperCase()}
 Outputs saved to: ${results.absOutputDir}
 Parsed ${results.blocksCount} layout blocks and mined ${results.rulesCount} compliance requirements.
+Interactive Graph Explorer saved to: ${join(results.absOutputDir, "graph_explorer.html")}
 
 Knowledge Graph Constructed:
 Nodes:
@@ -334,11 +357,13 @@ ${edgeSummary}`;
         let searchDir = params.output_dir;
         if (!searchDir) {
           // Find last output dir from session manager entries
-          for (const entry of ctx.sessionManager.getEntries()) {
-            if (entry.type === "custom" && entry.customType === "standard-parser-state") {
-              const data = entry.data as ParserState;
-              if (data && typeof data.lastOutputDir === "string") {
-                searchDir = data.lastOutputDir;
+          if (ctx?.sessionManager?.getEntries) {
+            for (const entry of ctx.sessionManager.getEntries()) {
+              if (entry.type === "custom" && entry.customType === "standard-parser-state") {
+                const data = entry.data as ParserState;
+                if (data && typeof data.lastOutputDir === "string") {
+                  searchDir = data.lastOutputDir;
+                }
               }
             }
           }
@@ -347,7 +372,8 @@ ${edgeSummary}`;
           searchDir = "./output_standard_parser";
         }
 
-        const resolvedGraphPath = resolve(ctx.cwd, join(searchDir, "knowledge_graph.json"));
+        const cwd = ctx?.cwd || process.cwd();
+        const resolvedGraphPath = resolve(cwd, join(searchDir, "knowledge_graph.json"));
         let graph: KnowledgeGraph | null = null;
         if (existsSync(resolvedGraphPath)) {
           try {
@@ -409,7 +435,7 @@ ${edgeSummary}`;
         ctx.ui.setStatus("standard-parser", undefined);
         ctx.ui.notify(`Parse successful! Auto-detected domain: ${results.detectedDomain.toUpperCase()}`, "info");
 
-        const summary = `Parsed ${results.blocksCount} layout blocks, mined ${results.rulesCount} compliance rules. Saved outputs to ${outputDir}`;
+        const summary = `Parsed ${results.blocksCount} layout blocks, mined ${results.rulesCount} compliance rules. Explorer: ${join(outputDir, "graph_explorer.html")}`;
         ctx.ui.notify(summary, "info");
       } catch (err: any) {
         ctx.ui.setStatus("standard-parser", undefined);
@@ -432,11 +458,13 @@ ${edgeSummary}`;
       let searchDir = parts[1];
       if (!searchDir) {
         // Find last output dir from session manager entries
-        for (const entry of ctx.sessionManager.getEntries()) {
-          if (entry.type === "custom" && entry.customType === "standard-parser-state") {
-            const data = entry.data as ParserState;
-            if (data && typeof data.lastOutputDir === "string") {
-              searchDir = data.lastOutputDir;
+        if (ctx?.sessionManager?.getEntries) {
+          for (const entry of ctx.sessionManager.getEntries()) {
+            if (entry.type === "custom" && entry.customType === "standard-parser-state") {
+              const data = entry.data as ParserState;
+              if (data && typeof data.lastOutputDir === "string") {
+                searchDir = data.lastOutputDir;
+              }
             }
           }
         }
@@ -446,7 +474,8 @@ ${edgeSummary}`;
       }
 
       let graph: KnowledgeGraph | null = null;
-      const resolvedGraphPath = resolve(ctx.cwd, join(searchDir, "knowledge_graph.json"));
+      const cwd = ctx?.cwd || process.cwd();
+      const resolvedGraphPath = resolve(cwd, join(searchDir, "knowledge_graph.json"));
       if (existsSync(resolvedGraphPath)) {
         try {
           const parsed = JSON.parse(readFileSync(resolvedGraphPath, "utf8"));
@@ -472,7 +501,7 @@ ${edgeSummary}`;
         const safeQueryName = query.replace(/[^a-zA-Z0-9_\-]/g, "_");
         const auditFileName = `audit_payload_${safeQueryName}.md`;
         const destPath = join(searchDir, auditFileName);
-        const absDestPath = resolve(ctx.cwd, destPath);
+        const absDestPath = resolve(cwd, destPath);
 
         writeFileSync(absDestPath, payload, "utf8");
         ctx.ui.notify(`Saved audit payload to: ${destPath}`, "info");
