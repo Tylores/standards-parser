@@ -21,4 +21,6 @@ export declare class RuleMiner {
     mineRules(blocks: Block[]): Rule[];
     private analyzeSentence;
     mineImplicitRules(blocks: Block[], existingRules: Rule[], ctx: any, signal?: AbortSignal): Promise<Rule[]>;
+    mineTabularRules(blocks: Block[], ctx: any, signal?: AbortSignal): Promise<Rule[]>;
 }
+export declare function filterBoilerplateRules(rules: Rule[], ctx: any, signal?: AbortSignal): Promise<Rule[]>;

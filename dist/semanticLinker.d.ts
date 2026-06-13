@@ -33,12 +33,25 @@ export declare class SemanticLinker {
     private topNTerms;
     private curatedTerms;
     private stopwords;
+    private actors;
     constructor(topNTerms?: number, config?: {
         curatedTerms?: Record<string, RegExp>;
         stopwords?: string[];
+        actors?: string[];
     });
-    buildKnowledgeGraph(ruleLedger: Rule[], blocks: Block[]): KnowledgeGraph;
+    buildKnowledgeGraph(ruleLedger: Rule[], blocks: Block[], ctx?: any, signal?: AbortSignal): Promise<KnowledgeGraph>;
     private extractTerms;
     private escapeRegExp;
     refineSemanticEdges(kg: KnowledgeGraph, ctx: any, signal?: AbortSignal): Promise<KnowledgeGraph>;
+    extractTermsLLM(ruleLedger: Rule[], ctx: any, signal?: AbortSignal): Promise<Record<string, number>>;
+    validateConflictsWithLLM(candidates: Array<{
+        r1: Rule;
+        r2: Rule;
+        term: string;
+    }>, ctx: any, signal?: AbortSignal): Promise<Array<{
+        r1: Rule;
+        r2: Rule;
+        term: string;
+        reason: string;
+    }>>;
 }

@@ -284,6 +284,208 @@ export function generateExplorerHtml(kg: KnowledgeGraph): string {
     .loading-overlay.hidden {
       opacity: 0;
     }
+
+    /* Breadcrumbs Navigation */
+    .breadcrumbs {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.75rem;
+      margin-bottom: 12px;
+      background: rgba(255, 255, 255, 0.03);
+      padding: 6px 10px;
+      border-radius: 4px;
+      border: 1px solid var(--border-color);
+    }
+    
+    .breadcrumb-item {
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: color 0.2s;
+    }
+    
+    .breadcrumb-item:hover {
+      color: var(--text-main);
+      text-decoration: underline;
+    }
+    
+    .breadcrumb-item.active {
+      color: #66bb6a;
+      font-weight: 500;
+      cursor: default;
+    }
+    
+    .breadcrumb-item.active:hover {
+      text-decoration: none;
+    }
+    
+    .breadcrumb-separator {
+      color: var(--text-muted);
+      opacity: 0.5;
+    }
+
+    /* Hierarchy Context Panels */
+    .hierarchy-section {
+      margin-top: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    
+    .hierarchy-title {
+      font-size: 0.8rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border-color);
+      padding-bottom: 4px;
+      margin-bottom: 4px;
+    }
+    
+    .hierarchy-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    
+    .group-header {
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    
+    .group-items {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    
+    .group-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      padding: 8px;
+      background-color: rgba(255, 255, 255, 0.02);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background-color 0.2s, border-color 0.2s, transform 0.1s;
+      font-size: 0.75rem;
+    }
+    
+    .group-item:hover {
+      background-color: rgba(255, 255, 255, 0.06);
+      border-color: #555577;
+      transform: translateX(2px);
+    }
+    
+    .item-icon-badge {
+      font-size: 0.6rem;
+      font-weight: 700;
+      padding: 1px 4px;
+      border-radius: 3px;
+      text-transform: uppercase;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+    
+    .badge-req-sm { background-color: rgba(239, 83, 80, 0.15); color: var(--color-requirement); }
+    .badge-sec-sm { background-color: rgba(102, 187, 106, 0.15); color: var(--color-section); }
+    .badge-term-sm { background-color: rgba(41, 182, 246, 0.15); color: var(--color-term); }
+    
+    .item-label {
+      flex: 1;
+      color: var(--text-main);
+      line-height: 1.3;
+      word-break: break-word;
+    }
+
+    .item-rel-type {
+      font-size: 0.65rem;
+      font-weight: 600;
+      margin-right: 6px;
+      text-transform: uppercase;
+    }
+
+    .item-rel-type.depends { color: #ef5350; }
+    .item-rel-type.implements { color: #66bb6a; }
+    .item-rel-type.conflicts { color: #ef5350; font-weight: 700; animation: blinker 1.5s linear infinite; }
+    
+    @keyframes blinker {
+      50% { opacity: 0.5; }
+    }
+
+    /* Search Results Hierarchy */
+    .search-results-header {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text-main);
+      margin-bottom: 8px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    
+    .search-results-tree {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-top: 6px;
+    }
+    
+    .tree-node {
+      margin-left: 10px;
+      border-left: 1px dashed var(--border-color);
+      padding-left: 8px;
+    }
+    
+    .tree-node.root-node {
+      margin-left: 0;
+      border-left: none;
+      padding-left: 0;
+    }
+    
+    .tree-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 6px;
+      padding: 6px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: background-color 0.2s;
+      font-size: 0.75rem;
+      margin-bottom: 2px;
+    }
+    
+    .tree-item:hover {
+      background-color: rgba(255, 255, 255, 0.05);
+    }
+    
+    .tree-item.matched {
+      background-color: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    
+    .tree-item.matched:hover {
+      background-color: rgba(255, 255, 255, 0.06);
+    }
+    
+    .tree-item-text {
+      color: var(--text-main);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      flex: 1;
+    }
+    
+    .tree-item.matched .tree-item-text {
+      font-weight: 600;
+    }
   </style>
 </head>
 <body>
@@ -325,7 +527,7 @@ export function generateExplorerHtml(kg: KnowledgeGraph): string {
         </div>
       </div>
       <div class="footer-controls">
-        <button class="btn btn-reset" style="font-size: 0.75rem; padding: 4px 8px;" onclick="togglePhysics()">Pause Physics</button>
+        <button id="toggle-physics-btn" class="btn btn-reset" style="font-size: 0.75rem; padding: 4px 8px;" onclick="togglePhysics()">Pause Physics</button>
         <button class="btn btn-reset" style="font-size: 0.75rem; padding: 4px 8px;" onclick="stabilizeGraph()">Stabilize</button>
       </div>
     </div>
@@ -356,6 +558,52 @@ export function generateExplorerHtml(kg: KnowledgeGraph): string {
         hover: { background: '#4fc3f7', border: '#0288d1' }
       }
     };
+
+    // --- INDEXING & RELATIONSHIPS FOR HIERARCHY & NAV ---
+    const nodesMap = {};
+    const adjList = {};
+    const parentSectionMap = {};
+
+    graphData.nodes.forEach(n => {
+      nodesMap[n.id] = n;
+      adjList[n.id] = [];
+    });
+
+    graphData.edges.forEach((e, idx) => {
+      const edgeId = \`edge-\${idx}\`;
+      if (adjList[e.from]) {
+        adjList[e.from].push({ edgeId, neighborId: e.to, type: e.label, direction: 'out' });
+      }
+      if (adjList[e.to]) {
+        adjList[e.to].push({ edgeId, neighborId: e.from, type: e.label, direction: 'in' });
+      }
+      
+      // Map parent-child section relationships
+      if (e.label === 'CONTAINS') {
+        if (e.from.startsWith('SEC-') && e.to.startsWith('SEC-')) {
+          parentSectionMap[e.to] = e.from;
+        }
+      }
+    });
+
+    // Helper to traverse and get the full path of section ancestors for any node
+    function getSectionPath(nodeId) {
+      const path = [];
+      let current = nodeId;
+      if (current.startsWith('REQ-')) {
+        const edge = graphData.edges.find(e => e.label === 'CONTAINS' && e.to === current && e.from.startsWith('SEC-'));
+        if (edge) {
+          current = edge.from;
+        } else {
+          return [];
+        }
+      }
+      while (current && current.startsWith('SEC-')) {
+        path.unshift(current);
+        current = parentSectionMap[current];
+      }
+      return path;
+    }
 
     const nodesDataSet = new vis.DataSet(graphData.nodes.map(n => ({
       ...n,
@@ -388,26 +636,122 @@ export function generateExplorerHtml(kg: KnowledgeGraph): string {
         arrows: { to: { enabled: true, scaleFactor: 0.4 } },
         color: { color: '#3c3c45', highlight: '#7e7e8d', hover: '#545462' },
         font: { color: '#8e8e9d', size: 9, strokeWidth: 0, align: 'middle' },
-        smooth: { type: 'continuous' }
+        smooth: false // Performance optimization: disable smooth curves (draw straight lines)
       },
       nodes: {
         shape: 'dot',
         font: { color: '#f0f0f5', size: 11, face: 'Inter, sans-serif' },
         borderWidth: 2,
-        shadow: { enabled: true, color: 'rgba(0,0,0,0.5)', size: 4, x: 1, y: 1 }
+        shadow: false // Performance optimization: disable expensive dynamic shadows
       },
       interaction: {
         hover: true,
         tooltipDelay: 200,
-        selectable: true
+        selectable: true,
+        hideEdgesOnDrag: true, // Performance optimization: hide edges while panning/dragging
+        hideEdgesOnZoom: true  // Performance optimization: hide edges while zooming
       }
     };
 
     const network = new vis.Network(container, data, options);
 
+    // --- STATE TRACKING FOR DELTA STYLE UPDATES ---
+    const nodeStates = {}; // nodeId -> 'default' | 'highlighted' | 'neighbor' | 'dimmed'
+    const edgeStates = {}; // edgeId -> 'default' | 'highlighted' | 'dimmed'
+
+    function getColorForGroup(group, opacity) {
+      const colors = {
+        Requirement: \`rgba(239, 83, 80, \${opacity})\`,
+        Section: \`rgba(102, 187, 106, \${opacity})\`,
+        Term: \`rgba(41, 182, 246, \${opacity})\`
+      };
+      return {
+        background: colors[group] || \`rgba(158, 158, 158, \${opacity})\`,
+        border: colors[group] || \`rgba(97, 97, 97, \${opacity})\`
+      };
+    }
+
+    function updateNodeStyles(targetStates) {
+      const updates = [];
+      graphData.nodes.forEach(n => {
+        const targetState = targetStates[n.id] || 'default';
+        const currentState = nodeStates[n.id] || 'default';
+        if (targetState !== currentState) {
+          let opacity = 1.0;
+          let size = n.group === 'Requirement' ? 14 : n.group === 'Section' ? 18 : 12;
+          
+          if (targetState === 'highlighted') {
+            opacity = 1.0;
+            size = n.group === 'Requirement' ? 18 : n.group === 'Section' ? 24 : 16;
+          } else if (targetState === 'neighbor') {
+            opacity = 0.85;
+            size = n.group === 'Requirement' ? 14 : n.group === 'Section' ? 18 : 12;
+          } else if (targetState === 'dimmed') {
+            opacity = 0.15;
+            size = n.group === 'Requirement' ? 12 : n.group === 'Section' ? 16 : 10;
+          }
+          
+          updates.push({
+            id: n.id,
+            color: targetState === 'default' 
+              ? (nodeColors[n.group] || { background: '#9e9e9e', border: '#616161' })
+              : getColorForGroup(n.group, opacity),
+            size: size
+          });
+          nodeStates[n.id] = targetState;
+        }
+      });
+      if (updates.length > 0) {
+        nodesDataSet.update(updates);
+      }
+    }
+
+    function updateEdgeStyles(targetStates) {
+      const updates = [];
+      graphData.edges.forEach((e, idx) => {
+        const edgeId = \`edge-\${idx}\`;
+        const targetState = targetStates[edgeId] || 'default';
+        const currentState = edgeStates[edgeId] || 'default';
+        if (targetState !== currentState) {
+          let color = '#3c3c45';
+          let width = 1;
+          if (targetState === 'highlighted') {
+            color = '#88889a';
+            width = 2;
+          } else if (targetState === 'dimmed') {
+            color = '#1b1b22';
+            width = 1;
+          }
+          updates.push({
+            id: edgeId,
+            color: { color: color },
+            width: width
+          });
+          edgeStates[edgeId] = targetState;
+        }
+      });
+      if (updates.length > 0) {
+        edgesDataSet.update(updates);
+      }
+    }
+
+    let physicsEnabled = true;
+
+    function updatePhysicsButton() {
+      const btn = document.getElementById("toggle-physics-btn");
+      if (btn) {
+        btn.innerText = physicsEnabled ? "Pause Physics" : "Resume Physics";
+      }
+    }
+
     network.on("stabilizationIterationsDone", function () {
       document.getElementById('loading-overlay').classList.add('hidden');
+      // Performance optimization: auto-pause physics once initial layout is stable
+      physicsEnabled = false;
+      network.setOptions({ physics: { enabled: false } });
+      updatePhysicsButton();
     });
+
     setTimeout(() => {
       document.getElementById('loading-overlay').classList.add('hidden');
     }, 4000);
@@ -422,81 +766,49 @@ export function generateExplorerHtml(kg: KnowledgeGraph): string {
       }
     });
 
-    function getColorForGroup(group, opacity) {
-      const colors = {
-        Requirement: \`rgba(239, 83, 80, \${opacity})\`,
-        Section: \`rgba(102, 187, 106, \${opacity})\`,
-        Term: \`rgba(41, 182, 246, \${opacity})\`
-      };
-      return {
-        background: colors[group] || \`rgba(158, 158, 158, \${opacity})\`,
-        border: colors[group] || \`rgba(97, 97, 97, \${opacity})\`
-      };
-    }
-
     function highlightNode(nodeId) {
       const connectedNodes = network.getConnectedNodes(nodeId);
       const connectedEdges = network.getConnectedEdges(nodeId);
       
-      const updateNodes = [];
+      const targetNodeStates = {};
+      const targetEdgeStates = {};
+      
       graphData.nodes.forEach(n => {
-        let opacity = 0.15;
-        let size = n.group === 'Requirement' ? 12 : n.group === 'Section' ? 16 : 10;
-        
         if (n.id === nodeId) {
-          opacity = 1.0;
-          size = n.group === 'Requirement' ? 18 : n.group === 'Section' ? 24 : 16;
+          targetNodeStates[n.id] = 'highlighted';
         } else if (connectedNodes.includes(n.id)) {
-          opacity = 0.85;
-          size = n.group === 'Requirement' ? 14 : n.group === 'Section' ? 18 : 12;
+          targetNodeStates[n.id] = 'neighbor';
+        } else {
+          targetNodeStates[n.id] = 'dimmed';
         }
-        
-        updateNodes.push({
-          id: n.id,
-          color: getColorForGroup(n.group, opacity),
-          size: size
-        });
       });
-      nodesDataSet.update(updateNodes);
-
-      const updateEdges = [];
+      
       graphData.edges.forEach((e, idx) => {
         const edgeId = \`edge-\${idx}\`;
-        let color = '#202025';
-        let width = 1;
         if (connectedEdges.includes(edgeId)) {
-          color = '#88889a';
-          width = 2;
+          targetEdgeStates[edgeId] = 'highlighted';
+        } else {
+          targetEdgeStates[edgeId] = 'dimmed';
         }
-        updateEdges.push({
-          id: edgeId,
-          color: { color: color },
-          width: width
-        });
       });
-      edgesDataSet.update(updateEdges);
+      
+      updateNodeStyles(targetNodeStates);
+      updateEdgeStyles(targetEdgeStates);
     }
 
     function resetHighlight() {
-      const updateNodes = [];
+      const targetNodeStates = {};
+      const targetEdgeStates = {};
+      
       graphData.nodes.forEach(n => {
-        updateNodes.push({
-          id: n.id,
-          color: nodeColors[n.group] || { background: '#9e9e9e', border: '#616161' },
-          size: n.group === 'Requirement' ? 14 : n.group === 'Section' ? 18 : 12
-        });
+        targetNodeStates[n.id] = 'default';
       });
-      nodesDataSet.update(updateNodes);
-
-      const updateEdges = [];
       graphData.edges.forEach((e, idx) => {
-        updateEdges.push({
-          id: \`edge-\${idx}\`,
-          color: { color: '#3c3c45' },
-          width: 1
-        });
+        targetEdgeStates[\`edge-\${idx}\`] = 'default';
       });
-      edgesDataSet.update(updateEdges);
+      
+      updateNodeStyles(targetNodeStates);
+      updateEdgeStyles(targetEdgeStates);
       
       document.getElementById('details-panel').innerHTML = \`
         <div class="placeholder-text">
@@ -506,6 +818,7 @@ export function generateExplorerHtml(kg: KnowledgeGraph): string {
       document.getElementById('search-input').value = "";
     }
 
+    // --- DETAIL & HIERARCHY RENDERING ---
     function showDetails(nodeId) {
       const node = graphData.nodes.find(n => n.id === nodeId);
       if (!node) return;
@@ -524,7 +837,7 @@ export function generateExplorerHtml(kg: KnowledgeGraph): string {
           <div class="detail-desc">"\${props.text}"</div>
           <table class="detail-meta-table">
             <tr><td>Constraint</td><td>\${props.constraint_type}</td></tr>
-            <tr><td>Section</td><td><a href="#" style="color:#50fa7b;text-decoration:none;" onclick="focusNode('SEC-\${props.section_number}')">\${props.section_number}</a></td></tr>
+            <tr><td>Section</td><td><a href="#" style="color:#66bb6a;text-decoration:none;font-weight:600;" onclick="focusNode('SEC-\${props.section_number}')">\${props.section_number}</a></td></tr>
             <tr><td>Page</td><td>\${props.page_number}</td></tr>
           </table>
         \`;
@@ -545,7 +858,339 @@ export function generateExplorerHtml(kg: KnowledgeGraph): string {
         \`;
       }
 
-      html += \`</div>\`;
+      html += \`</div>\`; // Close detail-card
+      
+      // Append hierarchy section below
+      html += \`<div class="hierarchy-section">\`;
+      html += \`<div class="hierarchy-title">Hierarchy & Connections</div>\`;
+      
+      if (node.group === 'Requirement') {
+        // Render section breadcrumbs
+        const path = getSectionPath(nodeId);
+        if (path.length > 0) {
+          html += \`<div class="breadcrumbs">\`;
+          path.forEach((pId, index) => {
+            const pNode = nodesMap[pId];
+            const pLabel = pNode ? pNode.properties.section_number : pId;
+            const isLast = index === path.length - 1;
+            if (isLast) {
+              html += \`<span class="breadcrumb-item active">\${pLabel}</span>\`;
+            } else {
+              html += \`<span class="breadcrumb-item" onclick="focusNode('\${pId}')">\${pLabel}</span>\`;
+              html += \`<span class="breadcrumb-separator">/</span>\`;
+            }
+          });
+          html += \`</div>\`;
+        }
+        
+        // Find links
+        const connections = adjList[nodeId] || [];
+        const relationships = {
+          dependsOn: [],
+          implements: [],
+          references: [],
+          conflicts: [],
+          requiredBy: [],
+          implementedBy: [],
+          referencedBy: [],
+          terms: []
+        };
+        
+        connections.forEach(conn => {
+          const neighbor = nodesMap[conn.neighborId];
+          if (!neighbor) return;
+          
+          if (conn.direction === 'out') {
+            if (neighbor.group === 'Term') {
+              relationships.terms.push(neighbor);
+            } else if (neighbor.group === 'Requirement') {
+              if (conn.type === 'DEPENDS_ON') relationships.dependsOn.push(neighbor);
+              else if (conn.type === 'IMPLEMENTS') relationships.implements.push(neighbor);
+              else if (conn.type === 'CONFLICTS_WITH') relationships.conflicts.push(neighbor);
+              else relationships.references.push(neighbor);
+            } else if (neighbor.group === 'Section') {
+              if (conn.type === 'IMPLEMENTS') relationships.implements.push(neighbor);
+              else if (conn.type === 'DEPENDS_ON') relationships.dependsOn.push(neighbor);
+              else relationships.references.push(neighbor);
+            }
+          } else { // direction === 'in'
+            if (neighbor.group === 'Requirement') {
+              if (conn.type === 'DEPENDS_ON') relationships.requiredBy.push(neighbor);
+              else if (conn.type === 'IMPLEMENTS') relationships.implementedBy.push(neighbor);
+              else if (conn.type === 'CONFLICTS_WITH') relationships.conflicts.push(neighbor);
+              else relationships.referencedBy.push(neighbor);
+            }
+          }
+        });
+        
+        // Render conflicts
+        if (relationships.conflicts.length > 0) {
+          html += \`
+            <div class="hierarchy-group">
+              <div class="group-header" style="color: #ef5350;">⚠️ Conflicts With</div>
+              <div class="group-items">
+          \`;
+          relationships.conflicts.forEach(c => {
+            const text = c.properties.text || c.id;
+            html += \`
+              <div class="group-item" style="border-color: rgba(239, 83, 80, 0.4); background-color: rgba(239, 83, 80, 0.05);" onclick="focusNode('\${c.id}')">
+                <span class="item-icon-badge badge-req-sm">REQ</span>
+                <span class="item-label"><span class="item-rel-type conflicts">Conflicts</span><strong>\${c.id}</strong>: \${text}</span>
+              </div>
+            \`;
+          });
+          html += \`</div></div>\`;
+        }
+        
+        // Render upstream dependencies/implementations
+        if (relationships.dependsOn.length > 0 || relationships.implements.length > 0) {
+          html += \`
+            <div class="hierarchy-group">
+              <div class="group-header">Upstream (Requires/Implements)</div>
+              <div class="group-items">
+          \`;
+          relationships.dependsOn.forEach(d => {
+            const label = d.group === 'Requirement' ? (d.properties.text || d.id) : (d.properties.title || d.id);
+            const badge = d.group === 'Requirement' ? 'badge-req-sm' : 'badge-sec-sm';
+            html += \`
+              <div class="group-item" onclick="focusNode('\${d.id}')">
+                <span class="item-icon-badge \${badge}">\${d.group.substring(0, 3)}</span>
+                <span class="item-label"><span class="item-rel-type depends">Depends On</span><strong>\${d.id}</strong>: \${label}</span>
+              </div>
+            \`;
+          });
+          relationships.implements.forEach(imp => {
+            const label = imp.group === 'Requirement' ? (imp.properties.text || imp.id) : (imp.properties.title || imp.id);
+            const badge = imp.group === 'Requirement' ? 'badge-req-sm' : 'badge-sec-sm';
+            html += \`
+              <div class="group-item" onclick="focusNode('\${imp.id}')">
+                <span class="item-icon-badge \${badge}">\${imp.group.substring(0, 3)}</span>
+                <span class="item-label"><span class="item-rel-type implements">Implements</span><strong>\${imp.id}</strong>: \${label}</span>
+              </div>
+            \`;
+          });
+          html += \`</div></div>\`;
+        }
+        
+        // Render downstream dependencies/implementations
+        if (relationships.requiredBy.length > 0 || relationships.implementedBy.length > 0) {
+          html += \`
+            <div class="hierarchy-group">
+              <div class="group-header">Downstream (Required/Implemented By)</div>
+              <div class="group-items">
+          \`;
+          relationships.requiredBy.forEach(r => {
+            const text = r.properties.text || r.id;
+            html += \`
+              <div class="group-item" onclick="focusNode('\${r.id}')">
+                <span class="item-icon-badge badge-req-sm">REQ</span>
+                <span class="item-label"><span class="item-rel-type depends">Required By</span><strong>\${r.id}</strong>: \${text}</span>
+              </div>
+            \`;
+          });
+          relationships.implementedBy.forEach(imp => {
+            const text = imp.properties.text || imp.id;
+            html += \`
+              <div class="group-item" onclick="focusNode('\${imp.id}')">
+                <span class="item-icon-badge badge-req-sm">REQ</span>
+                <span class="item-label"><span class="item-rel-type implements">Implemented By</span><strong>\${imp.id}</strong>: \${text}</span>
+              </div>
+            \`;
+          });
+          html += \`</div></div>\`;
+        }
+        
+        // Render references
+        if (relationships.references.length > 0 || relationships.referencedBy.length > 0) {
+          html += \`
+            <div class="hierarchy-group">
+              <div class="group-header">References & Mentions</div>
+              <div class="group-items">
+          \`;
+          relationships.references.forEach(r => {
+            const label = r.group === 'Requirement' ? (r.properties.text || r.id) : (r.properties.title || r.id);
+            const badge = r.group === 'Requirement' ? 'badge-req-sm' : 'badge-sec-sm';
+            html += \`
+              <div class="group-item" onclick="focusNode('\${r.id}')">
+                <span class="item-icon-badge \${badge}">\${r.group.substring(0, 3)}</span>
+                <span class="item-label"><span class="item-rel-type">References</span><strong>\${r.id}</strong>: \${label}</span>
+              </div>
+            \`;
+          });
+          relationships.referencedBy.forEach(r => {
+            const label = r.group === 'Requirement' ? (r.properties.text || r.id) : (r.properties.title || r.id);
+            const badge = r.group === 'Requirement' ? 'badge-req-sm' : 'badge-sec-sm';
+            html += \`
+              <div class="group-item" onclick="focusNode('\${r.id}')">
+                <span class="item-icon-badge \${badge}">\${r.group.substring(0, 3)}</span>
+                <span class="item-label"><span class="item-rel-type">Referenced By</span><strong>\${r.id}</strong>: \${label}</span>
+              </div>
+            \`;
+          });
+          html += \`</div></div>\`;
+        }
+        
+        // Render terms
+        if (relationships.terms.length > 0) {
+          html += \`
+            <div class="hierarchy-group">
+              <div class="group-header">Keywords / Concept Terms</div>
+              <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px;">
+          \`;
+          relationships.terms.forEach(t => {
+            html += \`
+              <span class="item-icon-badge badge-term-sm" style="cursor: pointer; padding: 4px 8px; font-size: 0.7rem;" onclick="focusNode('\${t.id}')">
+                \${t.properties.name}
+              </span>
+            \`;
+          });
+          html += \`</div></div>\`;
+        }
+      } else if (node.group === 'Section') {
+        const path = getSectionPath(nodeId);
+        if (path.length > 1) {
+          html += \`<div class="breadcrumbs">\`;
+          path.forEach((pId, index) => {
+            const pNode = nodesMap[pId];
+            const pLabel = pNode ? pNode.properties.section_number : pId;
+            const isLast = index === path.length - 1;
+            if (isLast) {
+              html += \`<span class="breadcrumb-item active">\${pLabel}</span>\`;
+            } else {
+              html += \`<span class="breadcrumb-item" onclick="focusNode('\${pId}')">\${pLabel}</span>\`;
+              html += \`<span class="breadcrumb-separator">/</span>\`;
+            }
+          });
+          html += \`</div>\`;
+        }
+        
+        // Find child sections (subsections)
+        const childSections = [];
+        graphData.nodes.forEach(n => {
+          if (n.group === 'Section' && parentSectionMap[n.id] === nodeId) {
+            childSections.push(n);
+          }
+        });
+        childSections.sort((a, b) => (a.properties.section_number || "").localeCompare(b.properties.section_number || "", undefined, { numeric: true, sensitivity: 'base' }));
+        
+        // Find contained requirements
+        const containedReqs = [];
+        const connections = adjList[nodeId] || [];
+        connections.forEach(conn => {
+          if (conn.direction === 'out' && conn.type === 'CONTAINS') {
+            const neighbor = nodesMap[conn.neighborId];
+            if (neighbor && neighbor.group === 'Requirement') {
+              containedReqs.push(neighbor);
+            }
+          }
+        });
+        containedReqs.sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
+        
+        // Render subsections
+        if (childSections.length > 0) {
+          html += \`
+            <div class="hierarchy-group">
+              <div class="group-header">Subsections (\${childSections.length})</div>
+              <div class="group-items">
+          \`;
+          childSections.forEach(s => {
+            const title = s.properties.title || \`Section \${s.properties.section_number}\`;
+            html += \`
+              <div class="group-item" onclick="focusNode('\${s.id}')">
+                <span class="item-icon-badge badge-sec-sm">SEC</span>
+                <span class="item-label"><strong>\${s.properties.section_number}</strong>: \${title}</span>
+              </div>
+            \`;
+          });
+          html += \`</div></div>\`;
+        }
+        
+        // Render requirements
+        if (containedReqs.length > 0) {
+          html += \`
+            <div class="hierarchy-group">
+              <div class="group-header">Contained Requirements (\${containedReqs.length})</div>
+              <div class="group-items">
+          \`;
+          containedReqs.forEach(r => {
+            const text = r.properties.text || "";
+            html += \`
+              <div class="group-item" onclick="focusNode('\${r.id}')">
+                <span class="item-icon-badge badge-req-sm">REQ</span>
+                <span class="item-label"><strong>\${r.id}</strong>: \${text}</span>
+              </div>
+            \`;
+          });
+          html += \`</div></div>\`;
+        }
+        
+        if (childSections.length === 0 && containedReqs.length === 0) {
+          html += \`<div class="placeholder-text" style="margin-top: 10px;">No subsections or requirements.</div>\`;
+        }
+      } else if (node.group === 'Term') {
+        const referencingReqs = [];
+        const connections = adjList[nodeId] || [];
+        connections.forEach(conn => {
+          if (conn.direction === 'in') {
+            const neighbor = nodesMap[conn.neighborId];
+            if (neighbor && neighbor.group === 'Requirement') {
+              referencingReqs.push(neighbor);
+            }
+          }
+        });
+        referencingReqs.sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
+        
+        if (referencingReqs.length > 0) {
+          const sectionToReqs = {};
+          referencingReqs.forEach(r => {
+            const secEdge = graphData.edges.find(e => e.label === 'CONTAINS' && e.to === r.id && e.from.startsWith('SEC-'));
+            const secId = secEdge ? secEdge.from : 'unknown';
+            if (!sectionToReqs[secId]) {
+              sectionToReqs[secId] = [];
+            }
+            sectionToReqs[secId].push(r);
+          });
+          
+          html += \`
+            <div class="hierarchy-group">
+              <div class="group-header">References by Document Location</div>
+              <div class="group-items">
+          \`;
+          
+          Object.keys(sectionToReqs).forEach(secId => {
+            const secNode = nodesMap[secId];
+            const secTitle = secNode ? (secNode.properties.title || \`Section \${secNode.properties.section_number}\`) : "Uncategorized Requirements";
+            const secNum = secNode ? secNode.properties.section_number : "";
+            
+            html += \`
+              <div style="margin-bottom: 8px;">
+                <div class="group-item" style="background-color: rgba(255,255,255,0.04); font-weight: 600;" onclick="focusNode('\${secId}')">
+                  <span class="item-icon-badge badge-sec-sm">SEC</span>
+                  <span class="item-label">\${secNum ? \`<strong>\${secNum}</strong>: \` : ''}\${secTitle} (\${sectionToReqs[secId].length} refs)</span>
+                </div>
+                <div style="padding-left: 12px; margin-top: 4px; display: flex; flex-direction: column; gap: 4px;">
+            \`;
+            
+            sectionToReqs[secId].forEach(r => {
+              const text = r.properties.text || "";
+              html += \`
+                <div class="group-item" onclick="focusNode('\${r.id}')">
+                  <span class="item-icon-badge badge-req-sm">REQ</span>
+                  <span class="item-label"><strong>\${r.id}</strong>: \${text}</span>
+                </div>
+              \`;
+            });
+            
+            html += \`</div></div>\`;
+          });
+          
+          html += \`</div></div>\`;
+        } else {
+          html += \`<div class="placeholder-text" style="margin-top: 10px;">This term is not referenced by any requirements.</div>\`;
+        }
+      }
+      
+      html += \`</div>\`; // Close hierarchy-section
       document.getElementById('details-panel').innerHTML = html;
     }
 
@@ -562,6 +1207,172 @@ export function generateExplorerHtml(kg: KnowledgeGraph): string {
           easingFunction: "easeInOutQuad"
         }
       });
+    }
+
+    // --- SEARCH HIERARCHY TREE BUILDER & RENDERER ---
+    function buildSearchResultsTree(matchedNodeIds) {
+      const matchedSections = [];
+      const matchedRequirements = [];
+      const matchedTerms = [];
+      
+      matchedNodeIds.forEach(id => {
+        const node = nodesMap[id];
+        if (!node) return;
+        if (node.group === 'Section') matchedSections.push(node);
+        else if (node.group === 'Requirement') matchedRequirements.push(node);
+        else if (node.group === 'Term') matchedTerms.push(node);
+      });
+      
+      const relevantSectionsSet = new Set();
+      
+      matchedSections.forEach(s => {
+        relevantSectionsSet.add(s.id);
+        const path = getSectionPath(s.id);
+        path.forEach(pId => relevantSectionsSet.add(pId));
+      });
+      
+      matchedRequirements.forEach(r => {
+        const path = getSectionPath(r.id);
+        path.forEach(pId => relevantSectionsSet.add(pId));
+      });
+      
+      const sortedRelevantSections = Array.from(relevantSectionsSet).map(id => nodesMap[id]).sort((a, b) => {
+        const aNum = a.properties.section_number || "";
+        const bNum = b.properties.section_number || "";
+        return aNum.localeCompare(bNum, undefined, { numeric: true, sensitivity: 'base' });
+      });
+      
+      const tree = {};
+      const roots = [];
+      
+      sortedRelevantSections.forEach(s => {
+        tree[s.id] = {
+          node: s,
+          children: [],
+          requirements: [],
+          isMatched: matchedNodeIds.includes(s.id)
+        };
+      });
+      
+      sortedRelevantSections.forEach(s => {
+        const parentId = parentSectionMap[s.id];
+        if (parentId && tree[parentId]) {
+          tree[parentId].children.push(tree[s.id]);
+        } else {
+          roots.push(tree[s.id]);
+        }
+      });
+      
+      matchedRequirements.forEach(r => {
+        const secEdge = graphData.edges.find(e => e.label === 'CONTAINS' && e.to === r.id && e.from.startsWith('SEC-'));
+        if (secEdge && tree[secEdge.from]) {
+          tree[secEdge.from].requirements.push({
+            node: r,
+            isMatched: true
+          });
+        }
+      });
+      
+      return { roots, matchedTerms };
+    }
+
+    function renderTreeHTML(treeNode, depth) {
+      const isMatched = treeNode.isMatched;
+      const node = treeNode.node;
+      const id = node.id;
+      const title = node.properties.title || \`Section \${node.properties.section_number}\`;
+      const secNum = node.properties.section_number;
+      
+      let html = \`<div class="tree-node \${depth === 0 ? 'root-node' : ''}">\`;
+      
+      if (isMatched) {
+        html += \`
+          <div class="tree-item matched" onclick="focusNode('\${id}')">
+            <span class="item-icon-badge badge-sec-sm">SEC</span>
+            <span class="tree-item-text" title="\${secNum} \${title}"><strong>\${secNum}</strong> \${title}</span>
+          </div>
+        \`;
+      } else {
+        html += \`
+          <div class="tree-item" onclick="focusNode('\${id}')">
+            <span class="item-icon-badge badge-sec-sm">SEC</span>
+            <span class="tree-item-text" title="\${secNum} \${title}"><strong>\${secNum}</strong> \${title}</span>
+          </div>
+        \`;
+      }
+      
+      if (treeNode.children.length > 0 || treeNode.requirements.length > 0) {
+        html += \`<div style="padding-left: 8px;">\`;
+        treeNode.children.forEach(child => {
+          html += renderTreeHTML(child, depth + 1);
+        });
+        
+        treeNode.requirements.forEach(reqObj => {
+          const req = reqObj.node;
+          const reqId = req.id;
+          const reqText = req.properties.text || "";
+          html += \`
+            <div class="tree-item matched" onclick="focusNode('\${reqId}')">
+              <span class="item-icon-badge badge-req-sm">REQ</span>
+              <span class="tree-item-text" title="\${reqId}: \${reqText}"><strong>\${reqId}</strong>: \${reqText}</span>
+            </div>
+          \`;
+        });
+        html += \`</div>\`;
+      }
+      
+      html += \`</div>\`;
+      return html;
+    }
+
+    function displaySearchResults(matchedIds, query) {
+      const { roots, matchedTerms } = buildSearchResultsTree(matchedIds);
+      
+      let html = \`
+        <div class="detail-card" style="gap: 8px;">
+          <div class="search-results-header">
+            <span>Search Results</span>
+            <span class="node-type-badge" style="background-color: rgba(255,255,255,0.1); color: var(--text-muted); font-size: 0.65rem;">\${matchedIds.length} found</span>
+          </div>
+          <div class="detail-desc" style="font-size: 0.75rem; margin-bottom: 8px;">
+            Matches for "\${query}" structured by document hierarchy:
+          </div>
+          <div class="search-results-tree">
+      \`;
+      
+      if (roots.length === 0 && matchedTerms.length === 0) {
+        html += \`<div class="placeholder-text" style="margin-top: 10px;">No matches found.</div>\`;
+      } else {
+        roots.forEach(root => {
+          html += renderTreeHTML(root, 0);
+        });
+        
+        if (matchedTerms.length > 0) {
+          html += \`
+            <div class="hierarchy-group" style="margin-top: 14px;">
+              <div class="group-header">Matched Concept Terms (\${matchedTerms.length})</div>
+              <div class="group-items">
+          \`;
+          matchedTerms.forEach(t => {
+            html += \`
+              <div class="group-item" onclick="focusNode('\${t.id}')">
+                <span class="item-icon-badge badge-term-sm">TERM</span>
+                <span class="item-label"><strong>\${t.properties.name}</strong> (\${t.properties.frequency} mentions)</span>
+              </div>
+            \`;
+          });
+          html += \`
+              </div>
+            </div>
+          \`;
+        }
+      }
+      
+      html += \`
+          </div>
+        </div>
+      \`;
+      document.getElementById('details-panel').innerHTML = html;
     }
 
     function performSearch() {
@@ -600,42 +1411,30 @@ export function generateExplorerHtml(kg: KnowledgeGraph): string {
         edges.forEach(e => connectedEdgeIds.add(e));
       });
 
-      const updateNodes = [];
-      graphData.nodes.forEach(n => {
-        let opacity = 0.15;
-        let size = n.group === 'Requirement' ? 12 : n.group === 'Section' ? 16 : 10;
-        
-        if (matchedNodeIds.includes(n.id)) {
-          opacity = 1.0;
-          size = n.group === 'Requirement' ? 18 : n.group === 'Section' ? 24 : 16;
-        } else if (connectedNodeIds.has(n.id)) {
-          opacity = 0.8;
-          size = n.group === 'Requirement' ? 14 : n.group === 'Section' ? 18 : 12;
-        }
-        updateNodes.push({
-          id: n.id,
-          color: getColorForGroup(n.group, opacity),
-          size: size
-        });
-      });
-      nodesDataSet.update(updateNodes);
+      const targetNodeStates = {};
+      const targetEdgeStates = {};
 
-      const updateEdges = [];
+      graphData.nodes.forEach(n => {
+        if (matchedNodeIds.includes(n.id)) {
+          targetNodeStates[n.id] = 'highlighted';
+        } else if (connectedNodeIds.has(n.id)) {
+          targetNodeStates[n.id] = 'neighbor';
+        } else {
+          targetNodeStates[n.id] = 'dimmed';
+        }
+      });
+
       graphData.edges.forEach((e, idx) => {
         const edgeId = \`edge-\${idx}\`;
-        let color = '#202025';
-        let width = 1;
         if (connectedEdgeIds.has(edgeId)) {
-          color = '#88889a';
-          width = 2;
+          targetEdgeStates[edgeId] = 'highlighted';
+        } else {
+          targetEdgeStates[edgeId] = 'dimmed';
         }
-        updateEdges.push({
-          id: edgeId,
-          color: { color: color },
-          width: width
-        });
       });
-      edgesDataSet.update(updateEdges);
+
+      updateNodeStyles(targetNodeStates);
+      updateEdgeStyles(targetEdgeStates);
 
       network.focus(matchedNodeIds[0], {
         scale: 1.0,
@@ -644,16 +1443,14 @@ export function generateExplorerHtml(kg: KnowledgeGraph): string {
           easingFunction: "easeInOutQuad"
         }
       });
-      showDetails(matchedNodeIds[0]);
+      
+      displaySearchResults(matchedNodeIds, query);
     }
 
-    let physicsEnabled = true;
     function togglePhysics() {
       physicsEnabled = !physicsEnabled;
       network.setOptions({ physics: { enabled: physicsEnabled } });
-      
-      const btn = document.querySelector(".sidebar-footer button");
-      btn.innerText = physicsEnabled ? "Pause Physics" : "Resume Physics";
+      updatePhysicsButton();
     }
 
     function stabilizeGraph() {
@@ -662,5 +1459,6 @@ export function generateExplorerHtml(kg: KnowledgeGraph): string {
     }
   </script>
 </body>
-</html>`;
+</html>
+`;
 }

@@ -279,4 +279,169 @@ Respond with valid JSON ONLY. Do not wrap in markdown or backticks.`;
 
     return implicitRules;
   }
+
+  async mineTabularRules(
+    blocks: Block[],
+    ctx: any,
+    signal?: AbortSignal
+  ): Promise<Rule[]> {
+    if (!ctx) return [];
+    
+    const tableBlocks = blocks.filter(b => b.type === "table");
+    if (tableBlocks.length === 0) return [];
+
+    const batchSize = 5;
+    const tabularRules: Rule[] = [];
+
+    for (let i = 0; i < tableBlocks.length; i += batchSize) {
+      if (signal?.aborted) {
+        throw new Error("Tabular rule mining aborted by user request.");
+      }
+      const batch = tableBlocks.slice(i, i + batchSize);
+      const batchPromptBlocks = batch.map(b => ({
+        id: b.id,
+        section: b.section_number,
+        page: b.page_number,
+        text: b.text
+      }));
+
+      const systemPrompt = `You are an expert systems engineer and compliance analyst.
+Your task is to analyze technical document table blocks and extract any compliance requirements, design limits, configuration defaults, state constraints, or protocol parameters defined in them.
+
+For each extracted requirement, you must return:
+1. "blockId": The ID of the table block the requirement was extracted from.
+2. "constraintType": The severity/type of the requirement:
+   - "Mandatory" (strict requirement/limit, e.g. "The default timeout is 10 seconds")
+   - "Prohibition" (forbidden state/value)
+   - "Recommendation" (preferred default/option)
+   - "Permission" (optional choice)
+3. "requirementText": A clear, self-contained sentence describing the requirement/limit. Make sure to specify the actor, parameters, and context so the sentence makes sense out-of-context (e.g. "In Section 4.6, the Response Server default port limit is 443.").
+
+Output must be a JSON array of objects with fields "blockId", "constraintType", and "requirementText".
+If no requirements are found in the tables, return an empty array [].
+Respond with valid JSON ONLY. Do not wrap in markdown or backticks.`;
+
+      const userPrompt = `Here are the table blocks to analyze:\n\n${JSON.stringify(batchPromptBlocks, null, 2)}`;
+
+      try {
+        const text = await askLLM({ systemPrompt, userPrompt, signal }, ctx);
+        if (!text) continue;
+
+        let cleanText = text.trim();
+        if (cleanText.startsWith("```json")) {
+          cleanText = cleanText.substring(7);
+        } else if (cleanText.startsWith("```")) {
+          cleanText = cleanText.substring(3);
+        }
+        if (cleanText.endsWith("```")) {
+          cleanText = cleanText.substring(0, cleanText.length - 3);
+        }
+
+        const parsed = JSON.parse(cleanText.trim());
+        if (Array.isArray(parsed)) {
+          for (const item of parsed) {
+            const blockId = item.blockId;
+            const originalBlock = batch.find(b => b.id === blockId);
+            if (!originalBlock) continue;
+
+            const cType = item.constraintType;
+            const validTypes = ["Prohibition", "Mandatory", "Recommendation", "Permission"];
+            if (!validTypes.includes(cType)) continue;
+
+            const reqText = item.requirementText;
+            if (!reqText || typeof reqText !== "string") continue;
+
+            const reqId = `REQ-${this.reqCounter.toString().padStart(3, '0')}`;
+            this.reqCounter++;
+
+            tabularRules.push({
+              id: reqId,
+              section_number: originalBlock.section_number || "UNKNOWN",
+              parent_hierarchy: [...originalBlock.parent_hierarchy],
+              heading_context: [...originalBlock.heading_context],
+              constraint_type: cType as any,
+              all_matched_constraints: ["LLM_TABULAR_EXTRACTED"],
+              text: reqText,
+              source_block_id: originalBlock.id,
+              page_number: originalBlock.page_number
+            });
+          }
+        }
+      } catch (err: any) {
+        console.error(`Failed to mine tabular rules for batch starting at index ${i}:`, err.message);
+      }
+    }
+
+    return tabularRules;
+  }
 }
+
+export async function filterBoilerplateRules(
+  rules: Rule[],
+  ctx: any,
+  signal?: AbortSignal
+): Promise<Rule[]> {
+  if (rules.length === 0 || !ctx) return rules;
+
+  const boilerplateIds = new Set<string>();
+  const batchSize = 100;
+
+  for (let i = 0; i < rules.length; i += batchSize) {
+    if (signal?.aborted) {
+      throw new Error("Boilerplate filtering aborted by user request.");
+    }
+    const batch = rules.slice(i, i + batchSize);
+    const batchPromptData = batch.map(r => ({
+      id: r.id,
+      page: r.page_number,
+      text: r.text
+    }));
+
+    const systemPrompt = `You are an expert Technical Standards Compliance Auditor.
+Your task is to identify requirements in the provided list that represent LEGAL BOILERPLATE, COPYRIGHT NOTICES, PATENT DISCLAIMERS, STANDARDS ORGANIZATION DISCLAIMERS, PARTICIPANTS, COMMITTEE MEMBERSHIP, or news releases rather than technical/engineering compliance requirements of the standard itself.
+
+Examples of boilerplate to flag:
+- "No part of this publication may be reproduced..."
+- "Use by artificial intelligence systems In no event..."
+- "Any person utilizing any IEEE Standards document should rely upon their own independent judgment..."
+- "At lectures, symposia, seminars, or educational courses..."
+- "The Working Group gratefully acknowledges the contributions..."
+- "Suggestions for changes in documents should be in the form of..."
+
+Return a JSON array containing only the "id" values of the requirements that are boilerplate/irrelevant and should be removed.
+Respond with valid JSON ONLY. Do not wrap in markdown or backticks. If none are boilerplate, return [].`;
+
+    const userPrompt = `Here are the candidate requirements to check:\n\n${JSON.stringify(batchPromptData, null, 2)}`;
+
+    try {
+      const text = await askLLM({ systemPrompt, userPrompt, signal }, ctx);
+      if (!text) continue;
+
+      let cleanText = text.trim();
+      if (cleanText.startsWith("```json")) {
+        cleanText = cleanText.substring(7);
+      } else if (cleanText.startsWith("```")) {
+        cleanText = cleanText.substring(3);
+      }
+      if (cleanText.endsWith("```")) {
+        cleanText = cleanText.substring(0, cleanText.length - 3);
+      }
+
+      const parsed = JSON.parse(cleanText.trim());
+      if (Array.isArray(parsed)) {
+        for (const id of parsed) {
+          if (typeof id === 'string') {
+            boilerplateIds.add(id);
+          }
+        }
+      }
+    } catch (err: any) {
+      console.error("Failed to filter boilerplate rules batch via LLM:", err.message);
+    }
+  }
+
+  const filtered = rules.filter(r => !boilerplateIds.has(r.id));
+  console.error(`Filtered out ${boilerplateIds.size} boilerplate requirements. Mined requirements left: ${filtered.length}`);
+  return filtered;
+}
+

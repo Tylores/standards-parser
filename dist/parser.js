@@ -1,5 +1,6 @@
 import { PDFParse } from 'pdf-parse';
 import { readFileSync } from 'node:fs';
+import { askLLM } from './llm.js';
 // Regex to match headings like:
 // "1.0 Introduction to ESI"
 // "4.1.2 Physical layer"
@@ -78,6 +79,59 @@ export function cleanPageLines(lines, cleanHeaders) {
     }
     return cleaned;
 }
+export async function validateHeadingsWithLLM(candidates, ctx, signal) {
+    const falseHeadingIds = new Set();
+    if (candidates.length === 0)
+        return falseHeadingIds;
+    const batchSize = 100;
+    for (let i = 0; i < candidates.length; i += batchSize) {
+        if (signal?.aborted) {
+            throw new Error("Heading validation aborted by user request.");
+        }
+        const batch = candidates.slice(i, i + batchSize);
+        const systemPrompt = `You are an expert technical document structure parser.
+Your task is to analyze a list of lines extracted from a technical standard that matched a rough heading pattern, and identify which ones are FALSE headings.
+
+A GENUINE section heading is a title of a section, clause, annex, or sub-clause (e.g. "1 Overview", "1.1 Scope", "Annex A (informative) - Security").
+A FALSE heading is text that is NOT a section title, such as:
+1. Math formulas or code snippets starting with decimal numbers (e.g., "0.012 Wh can be expressed as...").
+2. Table rows, pricing matrix values, or text columns starting with numbers (e.g., "150 \t$0.84", "PM to midnight...").
+3. Steps in a numbered sequence, footnotes, or list items (e.g., "9. Recall that no activation time...", "11. The LD waits...").
+4. Normal text paragraphs that happen to start with numbers.
+
+Analyze the list and return a JSON array containing only the "id" numbers of the FALSE headings.
+Respond with valid JSON ONLY. Do not wrap in markdown or backticks. If all candidates are genuine headings, return an empty array [].`;
+        const userPrompt = `Here are the candidate headings to validate:\n\n${JSON.stringify(batch, null, 2)}`;
+        try {
+            const text = await askLLM({ systemPrompt, userPrompt, signal }, ctx);
+            if (!text) {
+                continue;
+            }
+            let cleanText = text.trim();
+            if (cleanText.startsWith("```json")) {
+                cleanText = cleanText.substring(7);
+            }
+            else if (cleanText.startsWith("```")) {
+                cleanText = cleanText.substring(3);
+            }
+            if (cleanText.endsWith("```")) {
+                cleanText = cleanText.substring(0, cleanText.length - 3);
+            }
+            const parsed = JSON.parse(cleanText.trim());
+            if (Array.isArray(parsed)) {
+                for (const id of parsed) {
+                    if (typeof id === 'number') {
+                        falseHeadingIds.add(id);
+                    }
+                }
+            }
+        }
+        catch (err) {
+            console.error("Failed to validate headings batch via LLM:", err.message);
+        }
+    }
+    return falseHeadingIds;
+}
 export class PDFParser {
     pdfPath;
     cleanHeaders;
@@ -112,8 +166,10 @@ export class PDFParser {
             }
         }
     }
-    async parse(signal) {
-        const pagesLinesAndTypes = [];
+    async parse(signal, ctx) {
+        const rawLinesInfo = [];
+        const candidateHeadings = [];
+        let candidateIdCounter = 1;
         let pdfParser = null;
         try {
             if (signal?.aborted) {
@@ -141,28 +197,30 @@ export class PDFParser {
                     }
                     const lineStr = line.trim();
                     if (!lineStr) {
-                        pagesLinesAndTypes.push([pageNum, "", "empty", null]);
+                        rawLinesInfo.push([pageNum, "", "empty", null, 0]);
                         continue;
                     }
                     // Match Heading
                     const headingMatch = HEADING_REGEX.exec(lineStr);
                     if (headingMatch) {
-                        pagesLinesAndTypes.push([pageNum, lineStr, "heading", [headingMatch[1], headingMatch[2]]]);
+                        const cid = candidateIdCounter++;
+                        candidateHeadings.push({ id: cid, line: lineStr });
+                        rawLinesInfo.push([pageNum, lineStr, "heading", [headingMatch[1], headingMatch[2]], cid]);
                         continue;
                     }
                     // Match List
                     const listMatch = LIST_PREFIX_REGEX.exec(lineStr);
                     if (listMatch) {
-                        pagesLinesAndTypes.push([pageNum, lineStr, "list_item", [listMatch[1], listMatch[2]]]);
+                        rawLinesInfo.push([pageNum, lineStr, "list_item", [listMatch[1], listMatch[2]], 0]);
                         continue;
                     }
                     // Match Table
                     if (isTableRow(lineStr)) {
-                        pagesLinesAndTypes.push([pageNum, lineStr, "table_row", null]);
+                        rawLinesInfo.push([pageNum, lineStr, "table_row", null, 0]);
                         continue;
                     }
                     // Fallback to normal text
-                    pagesLinesAndTypes.push([pageNum, lineStr, "text", null]);
+                    rawLinesInfo.push([pageNum, lineStr, "text", null, 0]);
                 }
             }
         }
@@ -177,7 +235,28 @@ export class PDFParser {
                 await pdfParser.destroy().catch(() => { });
             }
         }
-        return this.assembleBlocks(pagesLinesAndTypes);
+        // Call LLM Heading validation if model context is available
+        let falseHeadingIds = new Set();
+        if (ctx && candidateHeadings.length > 0) {
+            try {
+                falseHeadingIds = await validateHeadingsWithLLM(candidateHeadings, ctx, signal);
+                console.error(`LLM Heading Validator flagged ${falseHeadingIds.size} / ${candidateHeadings.length} candidate headings as false headings.`);
+            }
+            catch (e) {
+                console.warn("LLM heading validation failed, falling back to regex behavior:", e.message);
+            }
+        }
+        // Process lines info, converting false headings to normal text/table row
+        const linesInfoToSend = rawLinesInfo.map(([pageNum, lineStr, lineType, groups, cid]) => {
+            if (lineType === "heading" && falseHeadingIds.has(cid)) {
+                if (isTableRow(lineStr)) {
+                    return [pageNum, lineStr, "table_row", null];
+                }
+                return [pageNum, lineStr, "text", null];
+            }
+            return [pageNum, lineStr, lineType, groups];
+        });
+        return this.assembleBlocks(linesInfoToSend);
     }
     assembleBlocks(linesInfo) {
         const blocks = [];

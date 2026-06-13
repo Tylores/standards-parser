@@ -37,7 +37,7 @@ async function test() {
 
   console.log('--- STEP 3: SEMANTIC LINKING ---');
   const linker = new SemanticLinker();
-  const kg = linker.buildKnowledgeGraph(ledger, blocks);
+  const kg = await linker.buildKnowledgeGraph(ledger, blocks);
   console.log('Nodes count:', kg.nodes.length);
   console.log('Edges count:', kg.edges.length);
   writeFileSync(join(outputDir, 'knowledge_graph.json'), JSON.stringify(kg, null, 2), 'utf8');

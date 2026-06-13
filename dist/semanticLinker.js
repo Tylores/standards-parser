@@ -54,12 +54,14 @@ export class SemanticLinker {
     topNTerms;
     curatedTerms;
     stopwords;
+    actors;
     constructor(topNTerms = 20, config) {
         this.topNTerms = topNTerms;
         this.curatedTerms = config?.curatedTerms || CURATED_TERMS;
         this.stopwords = config?.stopwords ? new Set(config.stopwords) : STOPWORDS;
+        this.actors = new Set(config?.actors || ["client", "server", "device", "system", "user", "application"]);
     }
-    buildKnowledgeGraph(ruleLedger, blocks) {
+    async buildKnowledgeGraph(ruleLedger, blocks, ctx, signal) {
         const nodes = [];
         const edges = [];
         const insertedNodeIds = new Set();
@@ -70,8 +72,14 @@ export class SemanticLinker {
                 sectionTitles[normalizeSection(block.section_number)] = block.heading_context[block.heading_context.length - 1];
             }
         }
-        // 2. Extract Terms (curated + dynamic high-frequency terms)
-        const extractedTerms = this.extractTerms(ruleLedger);
+        // 2. Extract Terms (curated + dynamic high-frequency terms or LLM extracted concepts)
+        let extractedTerms = {};
+        if (ctx) {
+            extractedTerms = await this.extractTermsLLM(ruleLedger, ctx, signal);
+        }
+        else {
+            extractedTerms = this.extractTerms(ruleLedger);
+        }
         // 3. Create Term Nodes
         const termPatterns = {};
         for (const [term, freq] of Object.entries(extractedTerms)) {
@@ -271,8 +279,13 @@ export class SemanticLinker {
         }
         // 6. Detect Potential rule conflicts (CONFLICTS_WITH)
         const conflictPairs = new Set();
+        const candidateConflicts = [];
         for (const [term, reqs] of Object.entries(termToReqs)) {
             if (reqs.length < 2) {
+                continue;
+            }
+            // Skip generic actors
+            if (this.actors.has(term)) {
                 continue;
             }
             for (let idx1 = 0; idx1 < reqs.length; idx1++) {
@@ -285,21 +298,68 @@ export class SemanticLinker {
                     const isOpposing = ((t1 === "Mandatory" && t2 === "Prohibition") ||
                         (t1 === "Prohibition" && t2 === "Mandatory"));
                     if (isOpposing) {
-                        const sortedIds = [r1.id, r2.id].sort();
-                        const pairKey = sortedIds.join('|');
-                        if (!conflictPairs.has(pairKey)) {
-                            conflictPairs.add(pairKey);
-                            edges.push({
-                                source: r1.id,
-                                target: r2.id,
-                                type: "CONFLICTS_WITH",
-                                properties: {
-                                    reason: `Opposing compliance keywords ('${t1}' vs '${t2}') referencing common concept '${term}'`,
-                                    shared_term: term
-                                }
-                            });
-                        }
+                        candidateConflicts.push({ r1, r2, term });
                     }
+                }
+            }
+        }
+        // Validate candidates via LLM if ctx is provided, otherwise draw them directly (fallback)
+        if (ctx && candidateConflicts.length > 0) {
+            try {
+                const verifiedConflicts = await this.validateConflictsWithLLM(candidateConflicts, ctx, signal);
+                for (const c of verifiedConflicts) {
+                    const sortedIds = [c.r1.id, c.r2.id].sort();
+                    const pairKey = sortedIds.join('|');
+                    if (!conflictPairs.has(pairKey)) {
+                        conflictPairs.add(pairKey);
+                        edges.push({
+                            source: c.r1.id,
+                            target: c.r2.id,
+                            type: "CONFLICTS_WITH",
+                            properties: {
+                                reason: c.reason,
+                                shared_term: c.term
+                            }
+                        });
+                    }
+                }
+            }
+            catch (e) {
+                console.warn("LLM conflict validation failed, falling back to all candidate conflicts:", e.message);
+                for (const c of candidateConflicts) {
+                    const sortedIds = [c.r1.id, c.r2.id].sort();
+                    const pairKey = sortedIds.join('|');
+                    if (!conflictPairs.has(pairKey)) {
+                        conflictPairs.add(pairKey);
+                        edges.push({
+                            source: c.r1.id,
+                            target: c.r2.id,
+                            type: "CONFLICTS_WITH",
+                            properties: {
+                                reason: `Opposing compliance keywords ('${c.r1.constraint_type}' vs '${c.r2.constraint_type}') referencing common concept '${c.term}'`,
+                                shared_term: c.term
+                            }
+                        });
+                    }
+                }
+            }
+        }
+        else {
+            // Local fallback
+            for (const c of candidateConflicts) {
+                const sortedIds = [c.r1.id, c.r2.id].sort();
+                const pairKey = sortedIds.join('|');
+                if (!conflictPairs.has(pairKey)) {
+                    conflictPairs.add(pairKey);
+                    edges.push({
+                        source: c.r1.id,
+                        target: c.r2.id,
+                        type: "CONFLICTS_WITH",
+                        properties: {
+                            reason: `Opposing compliance keywords ('${c.r1.constraint_type}' vs '${c.r2.constraint_type}') referencing common concept '${c.term}'`,
+                            shared_term: c.term
+                        }
+                    });
                 }
             }
         }
@@ -451,5 +511,155 @@ Respond with valid JSON ONLY. Do not wrap in markdown or backticks.`;
             ...kg,
             edges: refinedEdges
         };
+    }
+    async extractTermsLLM(ruleLedger, ctx, signal) {
+        if (!ctx || ruleLedger.length === 0) {
+            return this.extractTerms(ruleLedger);
+        }
+        // Select a sample of requirements to fit in token limits but get broad coverage
+        const sampleSize = Math.min(ruleLedger.length, 120);
+        const step = Math.max(1, Math.floor(ruleLedger.length / sampleSize));
+        const sampleRules = [];
+        for (let i = 0; i < ruleLedger.length; i += step) {
+            sampleRules.push(ruleLedger[i]);
+            if (sampleRules.length >= sampleSize)
+                break;
+        }
+        const textToAnalyze = sampleRules.map(r => r.text).join("\n");
+        const systemPrompt = `You are an expert Technical Standards Ontologist and Systems Architect.
+Your task is to analyze standard text snippets and identify the top 20–30 domain-specific technical concepts, acronyms, or key protocols mentioned in them.
+
+Guidelines:
+1. Extract compound technical concepts (e.g. "heartbeat interval", "Response Server", "DERControl", "mTLS handshake") and technical acronyms (e.g. "XML", "EXI", "mRID", "TLS").
+2. Do NOT extract general English words (e.g. "document", "standard", "requirement").
+3. Do NOT extract generic actors (e.g. "client", "server", "device", "system", "user", "application") as these represent actors rather than technical concepts.
+4. Keep the terminology highly relevant to the specific standard's technical content.
+
+Return a JSON array of strings containing only the extracted terms.
+Respond with valid JSON ONLY. Do not wrap in markdown or backticks.`;
+        const userPrompt = `Here is the sample text to extract concepts from:\n\n${textToAnalyze}`;
+        try {
+            const text = await askLLM({ systemPrompt, userPrompt, signal }, ctx);
+            if (text) {
+                let cleanText = text.trim();
+                if (cleanText.startsWith("```json")) {
+                    cleanText = cleanText.substring(7);
+                }
+                else if (cleanText.startsWith("```")) {
+                    cleanText = cleanText.substring(3);
+                }
+                if (cleanText.endsWith("```")) {
+                    cleanText = cleanText.substring(0, cleanText.length - 3);
+                }
+                const parsed = JSON.parse(cleanText.trim());
+                if (Array.isArray(parsed) && parsed.length > 0) {
+                    const finalTerms = {};
+                    for (const term of parsed) {
+                        if (typeof term !== 'string' || term.trim().length < 3)
+                            continue;
+                        const termClean = term.trim().toLowerCase();
+                        // Exclude common actors
+                        const commonActors = Array.from(this.actors);
+                        if (commonActors.includes(termClean))
+                            continue;
+                        const escaped = termClean.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                        const pattern = new RegExp(`\\b${escaped}s?\\b`, 'i');
+                        let freq = 0;
+                        for (const rule of ruleLedger) {
+                            pattern.lastIndex = 0;
+                            if (pattern.test(rule.text)) {
+                                freq++;
+                            }
+                        }
+                        finalTerms[termClean] = freq;
+                    }
+                    const sortedTerms = {};
+                    Object.entries(finalTerms)
+                        .sort((a, b) => b[1] - a[1])
+                        .forEach(([k, v]) => {
+                        sortedTerms[k] = v;
+                    });
+                    return sortedTerms;
+                }
+            }
+        }
+        catch (err) {
+            console.error("Failed to extract technical terms via LLM, falling back to local extraction:", err.message);
+        }
+        return this.extractTerms(ruleLedger);
+    }
+    async validateConflictsWithLLM(candidates, ctx, signal) {
+        const verified = [];
+        if (candidates.length === 0)
+            return verified;
+        const batchSize = 15;
+        for (let i = 0; i < candidates.length; i += batchSize) {
+            if (signal?.aborted) {
+                throw new Error("Conflict validation aborted by user request.");
+            }
+            const batch = candidates.slice(i, i + batchSize);
+            const batchPromptData = batch.map((c, idx) => ({
+                index: idx,
+                term: c.term,
+                req1: { id: c.r1.id, text: c.r1.text, type: c.r1.constraint_type },
+                req2: { id: c.r2.id, text: c.r2.text, type: c.r2.constraint_type }
+            }));
+            const systemPrompt = `You are an expert technical standards compliance checker.
+Your task is to analyze pairs of compliance requirements that contain opposing compliance severity words (e.g. one is Mandatory/shall and the other is Prohibition/shall not) and reference the same technical term.
+You must determine which pairs represent GENUINE logical conflicts/contradictions (i.e. they specify opposing requirements for the exact same function, parameter, action, or state).
+
+Examples:
+- GENUINE CONFLICT:
+  Req 1: "The server shall transmit heartbeats every 5 seconds."
+  Req 2: "The server shall not transmit heartbeats."
+- NOT A CONFLICT (COMPLEMENTARY OR DIFFERENT CONTEXT):
+  Req 1: "The server shall accept incoming connection requests."
+  Req 2: "The server shall not accept connection requests containing expired certificates."
+  (Here, Req 2 is a specific conditional prohibition, not a general contradiction of Req 1).
+
+For each candidate in the input, return whether it is a genuine conflict. If yes, provide a 1-sentence reason.
+Return a JSON array of objects, each containing:
+- "index": The index of the candidate in the input batch.
+- "isConflict": boolean (true/false).
+- "reason": A 1-sentence explanation of why it is a genuine conflict (only if isConflict is true).
+
+Respond with valid JSON ONLY. Do not wrap in markdown or backticks.`;
+            const userPrompt = `Here are the candidate conflict pairs to analyze:\n\n${JSON.stringify(batchPromptData, null, 2)}`;
+            try {
+                const text = await askLLM({ systemPrompt, userPrompt, signal }, ctx);
+                if (!text)
+                    continue;
+                let cleanText = text.trim();
+                if (cleanText.startsWith("```json")) {
+                    cleanText = cleanText.substring(7);
+                }
+                else if (cleanText.startsWith("```")) {
+                    cleanText = cleanText.substring(3);
+                }
+                if (cleanText.endsWith("```")) {
+                    cleanText = cleanText.substring(0, cleanText.length - 3);
+                }
+                const parsed = JSON.parse(cleanText.trim());
+                if (Array.isArray(parsed)) {
+                    for (const item of parsed) {
+                        const idx = item.index;
+                        const isConflict = item.isConflict;
+                        if (typeof idx === 'number' && isConflict && idx >= 0 && idx < batch.length) {
+                            const cand = batch[idx];
+                            verified.push({
+                                r1: cand.r1,
+                                r2: cand.r2,
+                                term: cand.term,
+                                reason: item.reason || "Logical conflict detected on technical concept."
+                            });
+                        }
+                    }
+                }
+            }
+            catch (err) {
+                console.error("Failed to validate conflicts batch via LLM:", err.message);
+            }
+        }
+        return verified;
     }
 }

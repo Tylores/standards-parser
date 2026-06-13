@@ -5,6 +5,7 @@ export interface DomainConfig {
   cleanHeaders: string[];
   roleDescription: string;
   auditTemplate: string;
+  actors?: string[];
 }
 
 // Common general English stopwords
@@ -103,7 +104,8 @@ export const PRESETS: Record<string, DomainConfig> = {
     stopwords: [...GENERAL_STOPWORDS],
     cleanHeaders: ["standard", "section", "page"],
     roleDescription: "Focus on overall clarity, deterministic behavior, testability, and structural completeness of the engineering requirements.",
-    auditTemplate: GENERIC_TEMPLATE
+    auditTemplate: GENERIC_TEMPLATE,
+    actors: ["client", "server", "device", "system", "user", "application"]
   },
   smartGrid: {
     name: "smartGrid",
@@ -137,7 +139,8 @@ export const PRESETS: Record<string, DomainConfig> = {
     stopwords: [...GENERAL_STOPWORDS, "ieee"],
     cleanHeaders: ["energy services interface", "ieee std", "prepared by"],
     roleDescription: "Focus on smart grid communications, mTLS security, transport mechanisms, latency constraints, and IEEE 2030.5 / SEP 2 protocol implementation (such as XML/EXI structures).",
-    auditTemplate: GENERIC_TEMPLATE
+    auditTemplate: GENERIC_TEMPLATE,
+    actors: ["client", "server", "device", "system", "user", "application", "gateway", "inverter"]
   },
   security: {
     name: "security",
@@ -163,7 +166,8 @@ export const PRESETS: Record<string, DomainConfig> = {
     stopwords: [...GENERAL_STOPWORDS, "security", "standard", "iso", "rfc"],
     cleanHeaders: ["security", "confidential", "proprietary", "iso", "rfc"],
     roleDescription: "Focus on threat modeling, cryptographic assurance, identity federation, secure transport, access controls, vulnerability mitigation, and data protection policies.",
-    auditTemplate: GENERIC_TEMPLATE
+    auditTemplate: GENERIC_TEMPLATE,
+    actors: ["client", "server", "device", "system", "user", "application", "administrator", "subject", "object"]
   }
 };
 
@@ -218,6 +222,7 @@ export function getDomainConfig(
     additionalStopwords?: string[];
     additionalCleanHeaders?: string[];
     additionalDomainInfo?: string;
+    additionalActors?: string[];
   }
 ): DomainConfig & { additionalDomainInfo?: string } {
   const preset = PRESETS[presetName] || PRESETS.generic;
@@ -231,12 +236,14 @@ export function getDomainConfig(
 
   const mergedStopwords = Array.from(new Set([...preset.stopwords, ...(options?.additionalStopwords || [])]));
   const mergedCleanHeaders = Array.from(new Set([...preset.cleanHeaders, ...(options?.additionalCleanHeaders || [])]));
+  const mergedActors = Array.from(new Set([...(preset.actors || []), ...(options?.additionalActors || [])]));
 
   return {
     ...preset,
     curatedTerms: mergedCuratedTerms,
     stopwords: mergedStopwords,
     cleanHeaders: mergedCleanHeaders,
+    actors: mergedActors,
     additionalDomainInfo: options?.additionalDomainInfo
   };
 }

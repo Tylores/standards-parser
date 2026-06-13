@@ -108,7 +108,7 @@ export async function runGenericPipeline(
     if (ctx?.ui?.notify) {
       ctx.ui.notify("Pre-parsing PDF standard to infer domain knowledge...", "info");
     } else {
-      console.log("Pre-parsing PDF standard to infer domain knowledge...");
+      console.error("Pre-parsing PDF standard to infer domain knowledge...");
     }
     const inferred = await inferDomainKnowledge(sampleText, ctx, options?.signal);
     
@@ -116,7 +116,7 @@ export async function runGenericPipeline(
       if (ctx?.ui?.notify) {
         ctx.ui.notify(`Successfully inferred domain: ${inferred.domainName}`, "info");
       } else {
-        console.log(`Successfully inferred domain: ${inferred.domainName}`);
+        console.error(`Successfully inferred domain: ${inferred.domainName}`);
       }
       selectedDomain = inferred.domainName;
 
@@ -154,7 +154,7 @@ export async function runGenericPipeline(
       if (ctx?.ui?.notify) {
         ctx.ui.notify("Falling back to rule-based domain detection...", "warning");
       } else {
-        console.log("Falling back to rule-based domain detection...");
+        console.error("Falling back to rule-based domain detection...");
       }
       selectedDomain = detectDomainPreset(sampleText);
       domainConfig = getDomainConfig(selectedDomain, {
@@ -175,7 +175,7 @@ export async function runGenericPipeline(
 
   // Step 2: Parse PDF with custom clean headers
   const parser = new PDFParser(absPdfPath, domainConfig.cleanHeaders);
-  const blocks = await parser.parse(options?.signal);
+  const blocks = await parser.parse(options?.signal, ctx);
 
   const blocksPath = join(absOutputDir, "blocks.json");
   writeFileSync(blocksPath, JSON.stringify(blocks, null, 2), "utf8");
@@ -190,7 +190,7 @@ export async function runGenericPipeline(
 
   // Step 3: Mine Rules
   const miner = new RuleMiner();
-  const ruleLedger = miner.mineRules(blocks);
+  let ruleLedger = miner.mineRules(blocks);
 
   // Call LLM for implicit requirements if context model is available
   try {
@@ -200,11 +200,34 @@ export async function runGenericPipeline(
       if (ctx?.ui?.notify) {
         ctx.ui.notify(`Mined ${implicitRules.length} additional implicit requirements using LLM.`, "info");
       } else {
-        console.log(`Mined ${implicitRules.length} additional implicit requirements using LLM.`);
+        console.error(`Mined ${implicitRules.length} additional implicit requirements using LLM.`);
       }
     }
   } catch (err: any) {
     console.warn("LLM implicit rule mining skipped or failed:", err.message);
+  }
+
+  // Call LLM for tabular requirements if context model is available
+  try {
+    const tabularRules = await miner.mineTabularRules(blocks, ctx, options?.signal);
+    if (tabularRules.length > 0) {
+      ruleLedger.push(...tabularRules);
+      if (ctx?.ui?.notify) {
+        ctx.ui.notify(`Mined ${tabularRules.length} tabular requirements using LLM.`, "info");
+      } else {
+        console.error(`Mined ${tabularRules.length} tabular requirements using LLM.`);
+      }
+    }
+  } catch (err: any) {
+    console.warn("LLM tabular rule mining skipped or failed:", err.message);
+  }
+
+  // Filter boilerplate/legal requirements using LLM post-mining
+  try {
+    const { filterBoilerplateRules } = await import("./ruleMiner.js");
+    ruleLedger = await filterBoilerplateRules(ruleLedger, ctx, options?.signal);
+  } catch (err: any) {
+    console.warn("LLM boilerplate filtering skipped or failed:", err.message);
   }
 
   const ledgerPath = join(absOutputDir, "ledger.json");
@@ -213,9 +236,10 @@ export async function runGenericPipeline(
   // Step 4: Semantic Linker & Knowledge Graph
   const linker = new SemanticLinker(20, {
     curatedTerms: domainConfig.curatedTerms,
-    stopwords: domainConfig.stopwords
+    stopwords: domainConfig.stopwords,
+    actors: domainConfig.actors
   });
-  let kg = linker.buildKnowledgeGraph(ruleLedger, blocks);
+  let kg = await linker.buildKnowledgeGraph(ruleLedger, blocks, ctx, options?.signal);
 
   // Call LLM semantic edge refiner if context model is available
   try {

@@ -22,12 +22,16 @@ export interface TreeNode {
     children: TreeNode[];
     content: Block[];
 }
+export declare function validateHeadingsWithLLM(candidates: {
+    id: number;
+    line: string;
+}[], ctx: any, signal?: AbortSignal): Promise<Set<number>>;
 export declare class PDFParser {
     private pdfPath;
     private cleanHeaders?;
     constructor(pdfPath: string, cleanHeaders?: string[]);
     getSampleText(signal?: AbortSignal): Promise<string>;
-    parse(signal?: AbortSignal): Promise<Block[]>;
+    parse(signal?: AbortSignal, ctx?: any): Promise<Block[]>;
     private assembleBlocks;
 }
 export declare function buildHierarchyTree(blocks: Block[]): TreeNode;
